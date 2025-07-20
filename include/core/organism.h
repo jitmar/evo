@@ -84,33 +84,33 @@ public:
     const Bytecode& getBytecode() const { return bytecode_; }
 
     /**
-     * @brief Get organism statistics
-     * @return Const reference to stats
-     */
-    const Stats& getStats() const { return stats_; }
-
-    /**
      * @brief Update fitness score
      * @param score New fitness score
      */
-    void setFitnessScore(double score) { stats_.fitness_score = score; }
+    void setFitnessScore(double score);
 
     /**
      * @brief Get fitness score
      * @return Current fitness score
      */
-    double getFitnessScore() const { return stats_.fitness_score; }
+    double getFitnessScore() const;
 
     /**
      * @brief Check if organism is alive (can replicate)
      * @return True if organism can replicate
      */
-    bool isAlive() const { return alive_; }
+    bool isAlive() const;
 
     /**
      * @brief Mark organism as dead
      */
-    void die() { alive_ = false; }
+    void die();
+
+    /**
+     * @brief Get organism statistics
+     * @return Stats by value (thread-safe)
+     */
+    Stats getStats() const;
 
     /**
      * @brief Get organism age in milliseconds

@@ -23,11 +23,14 @@ int EvolutionController::runInteractive() {
 }
 
 int EvolutionController::run(int argc, char* argv[]) {
+    (void)argc; // Suppress unused parameter warning
+    (void)argv; // Suppress unused parameter warning
     // TODO: Parse arguments and run accordingly
     return 0;
 }
 
 bool EvolutionController::processCommand(const std::string& command) {
+    (void)command; // Suppress unused parameter warning
     // TODO: Process command using processor_
     return true;
 }
@@ -77,11 +80,13 @@ bool EvolutionController::resumeEvolution() {
 }
 
 bool EvolutionController::loadConfig(const std::string& filename) {
+    (void)filename; // Suppress unused parameter warning
     // TODO: Load config from file
     return true;
 }
 
 bool EvolutionController::saveConfig(const std::string& filename) {
+    (void)filename; // Suppress unused parameter warning
     // TODO: Save config to file
     return true;
 }

@@ -3,6 +3,10 @@
 #include <sstream>
 #include <iomanip>
 
+// TODO: For high-performance scenarios, consider using dedicated mutexes for independent properties
+// instead of a single mutex_ for the entire Organism. This would allow greater concurrency at the
+// cost of increased complexity and potential deadlocks. For now, a single mutex is used for safety and simplicity.
+
 namespace evosim {
 
 // Initialize static member
@@ -38,16 +42,11 @@ Organism::Organism(const Organism& other)
 
 Organism::Organism(Organism&& other) noexcept
     : bytecode_(std::move(other.bytecode_))
+    , stats_(other.stats_)
     , alive_(other.alive_.load()) {
     
-    stats_.id = next_id_++;
-    stats_.generation = other.stats_.generation;
-    stats_.parent_id = other.stats_.id;
-    stats_.fitness_score = other.stats_.fitness_score;
-    stats_.birth_time = Clock::now();
-    stats_.last_replication = stats_.birth_time;
-    stats_.replication_count = 0;
-    stats_.mutation_count = 0;
+    // Keep the original ID for move semantics
+    // Don't generate a new ID since we're moving, not copying
 }
 
 Organism& Organism::operator=(const Organism& other) {
@@ -69,9 +68,8 @@ Organism& Organism::operator=(Organism&& other) noexcept {
         std::lock_guard<std::mutex> other_lock(other.mutex_);
         
         bytecode_ = std::move(other.bytecode_);
+        stats_ = other.stats_;  // Move the entire stats
         alive_ = other.alive_.load();
-        stats_.fitness_score = other.stats_.fitness_score;
-        // Don't copy ID, generation, or timestamps
     }
     return *this;
 }
@@ -99,9 +97,35 @@ Organism::OrganismPtr Organism::replicate(double mutation_rate, uint32_t max_mut
     return child;
 }
 
+void Organism::setFitnessScore(double score) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    stats_.fitness_score = score;
+}
+
+double Organism::getFitnessScore() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return stats_.fitness_score;
+}
+
+bool Organism::isAlive() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return alive_;
+}
+
+void Organism::die() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    alive_ = false;
+}
+
 std::chrono::milliseconds Organism::getAge() const {
+    std::lock_guard<std::mutex> lock(mutex_);
     auto now = Clock::now();
     return std::chrono::duration_cast<std::chrono::milliseconds>(now - stats_.birth_time);
+}
+
+Organism::Stats Organism::getStats() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return stats_;
 }
 
 std::string Organism::serialize() const {

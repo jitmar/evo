@@ -18,6 +18,7 @@ add_executable(evosim_tests ${TEST_SOURCES})
 
 # Link libraries for tests
 target_link_libraries(evosim_tests
+    evosim_lib
     GTest::gtest
     GTest::gtest_main
     ${OpenCV_LIBS}

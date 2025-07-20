@@ -2,6 +2,7 @@
 #include "core/organism.h"
 #include <thread>
 #include <set>
+#include <mutex> // Added for mutex
 
 using namespace evosim;
 
@@ -20,9 +21,6 @@ protected:
 };
 
 TEST_F(OrganismTest, Constructor) {
-    // TODO: Organism implementation incomplete - constructor linking issues
-    GTEST_SKIP() << "Organism constructor not fully implemented yet";
-    
     Organism organism(test_bytecode_);
     
     EXPECT_EQ(organism.getBytecode(), test_bytecode_);
@@ -33,9 +31,6 @@ TEST_F(OrganismTest, Constructor) {
 }
 
 TEST_F(OrganismTest, Replication) {
-    // TODO: Organism implementation incomplete - replication method linking issues
-    GTEST_SKIP() << "Organism replication not fully implemented yet";
-    
     Organism parent(test_bytecode_);
     parent.setFitnessScore(0.8);
     
@@ -48,9 +43,6 @@ TEST_F(OrganismTest, Replication) {
 }
 
 TEST_F(OrganismTest, FitnessScore) {
-    // TODO: Organism implementation incomplete - constructor linking issues
-    GTEST_SKIP() << "Organism constructor not fully implemented yet";
-    
     Organism organism(test_bytecode_);
     
     organism.setFitnessScore(0.75);
@@ -61,9 +53,6 @@ TEST_F(OrganismTest, FitnessScore) {
 }
 
 TEST_F(OrganismTest, Lifecycle) {
-    // TODO: Organism implementation incomplete - constructor linking issues
-    GTEST_SKIP() << "Organism constructor not fully implemented yet";
-    
     Organism organism(test_bytecode_);
     
     EXPECT_TRUE(organism.isAlive());
@@ -73,9 +62,6 @@ TEST_F(OrganismTest, Lifecycle) {
 }
 
 TEST_F(OrganismTest, Age) {
-    // TODO: Organism implementation incomplete - constructor linking issues
-    GTEST_SKIP() << "Organism constructor not fully implemented yet";
-    
     Organism organism(test_bytecode_);
     
     auto age = organism.getAge();
@@ -88,9 +74,6 @@ TEST_F(OrganismTest, Age) {
 }
 
 TEST_F(OrganismTest, Serialization) {
-    // TODO: Organism implementation incomplete - serialization method linking issues
-    GTEST_SKIP() << "Organism serialization not fully implemented yet";
-    
     Organism organism(test_bytecode_);
     organism.setFitnessScore(0.6);
     
@@ -104,9 +87,6 @@ TEST_F(OrganismTest, Serialization) {
 }
 
 TEST_F(OrganismTest, CopyConstructor) {
-    // TODO: Organism implementation incomplete - copy constructor linking issues
-    GTEST_SKIP() << "Organism copy constructor not fully implemented yet";
-    
     Organism original(test_bytecode_);
     original.setFitnessScore(0.9);
     
@@ -118,9 +98,6 @@ TEST_F(OrganismTest, CopyConstructor) {
 }
 
 TEST_F(OrganismTest, MoveConstructor) {
-    // TODO: Organism implementation incomplete - move constructor linking issues
-    GTEST_SKIP() << "Organism move constructor not fully implemented yet";
-    
     Organism original(test_bytecode_);
     original.setFitnessScore(0.7);
     
@@ -134,9 +111,6 @@ TEST_F(OrganismTest, MoveConstructor) {
 }
 
 TEST_F(OrganismTest, AssignmentOperator) {
-    // TODO: Organism implementation incomplete - assignment operator linking issues
-    GTEST_SKIP() << "Organism assignment operator not fully implemented yet";
-    
     Organism original(test_bytecode_);
     original.setFitnessScore(0.8);
     
@@ -152,9 +126,6 @@ TEST_F(OrganismTest, AssignmentOperator) {
 }
 
 TEST_F(OrganismTest, MoveAssignmentOperator) {
-    // TODO: Organism implementation incomplete - move assignment operator linking issues
-    GTEST_SKIP() << "Organism move assignment operator not fully implemented yet";
-    
     Organism original(test_bytecode_);
     original.setFitnessScore(0.85);
     
@@ -172,9 +143,6 @@ TEST_F(OrganismTest, MoveAssignmentOperator) {
 }
 
 TEST_F(OrganismTest, MultipleReplications) {
-    // TODO: Organism implementation incomplete - replication method linking issues
-    GTEST_SKIP() << "Organism multiple replications not fully implemented yet";
-    
     Organism organism(test_bytecode_);
     
     std::vector<Organism::OrganismPtr> children;
@@ -193,9 +161,6 @@ TEST_F(OrganismTest, MultipleReplications) {
 }
 
 TEST_F(OrganismTest, MutationRate) {
-    // TODO: Organism implementation incomplete - replication method linking issues
-    GTEST_SKIP() << "Organism mutation rate testing not fully implemented yet";
-    
     Organism organism(test_bytecode_);
     
     // Test with zero mutation rate
@@ -209,9 +174,6 @@ TEST_F(OrganismTest, MutationRate) {
 }
 
 TEST_F(OrganismTest, Statistics) {
-    // TODO: Organism implementation incomplete - constructor linking issues
-    GTEST_SKIP() << "Organism constructor not fully implemented yet";
-    
     Organism organism(test_bytecode_);
     
     const auto& stats = organism.getStats();
@@ -225,19 +187,21 @@ TEST_F(OrganismTest, Statistics) {
 }
 
 TEST_F(OrganismTest, ThreadSafety) {
-    // TODO: Organism implementation incomplete - constructor linking issues
-    GTEST_SKIP() << "Organism constructor not fully implemented yet";
-    
     Organism organism(test_bytecode_);
     
     // Test concurrent access (basic test)
     std::vector<std::thread> threads;
     std::vector<double> results;
+    std::mutex results_mutex;
     
     for (int i = 0; i < 10; ++i) {
-        threads.emplace_back([&organism, &results, i]() {
+        threads.emplace_back([&organism, &results, &results_mutex, i]() {
             organism.setFitnessScore(0.1 * i);
-            results.push_back(organism.getFitnessScore());
+            double score = organism.getFitnessScore();
+            {
+                std::lock_guard<std::mutex> lock(results_mutex);
+                results.push_back(score);
+            }
         });
     }
     

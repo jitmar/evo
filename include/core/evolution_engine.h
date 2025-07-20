@@ -25,16 +25,17 @@ public:
      * @brief Evolution engine statistics
      */
     struct EngineStats {
-        uint64_t total_generations;     ///< Total generations completed
-        uint64_t total_runtime_ms;      ///< Total runtime in milliseconds
-        double generations_per_second;  ///< Evolution rate
-        bool is_running;                ///< Engine running state
-        bool is_paused;                 ///< Engine paused state
-        TimePoint start_time;           ///< Engine start time
-        TimePoint last_generation_time; ///< Last generation completion time
-        uint32_t current_population;    ///< Current population size
-        double current_best_fitness;    ///< Current best fitness score
-        double current_avg_fitness;     ///< Current average fitness score
+        uint64_t total_generations = 0;     ///< Total generations completed
+        uint64_t total_runtime_ms = 0;      ///< Total runtime in milliseconds
+        double generations_per_second = 0.0;  ///< Evolution rate
+        bool is_running = false;                ///< Engine running state
+        bool is_paused = false;                 ///< Engine paused state
+        TimePoint start_time = TimePoint();           ///< Engine start time
+        TimePoint last_generation_time = TimePoint(); ///< Last generation completion time
+        uint32_t current_population = 0;    ///< Current population size
+        double current_best_fitness = 0.0;    ///< Current best fitness score
+        double current_avg_fitness = 0.0;     ///< Current average fitness score
+        EngineStats() = default;
     };
 
     /**
@@ -130,12 +131,6 @@ public:
      * @return True if resumed successfully
      */
     bool resume();
-
-    /**
-     * @brief Run single generation
-     * @return True if generation completed successfully
-     */
-    bool runGeneration();
 
     /**
      * @brief Get engine statistics
@@ -283,6 +278,12 @@ private:
      * @return True if directory exists or created
      */
     bool ensureSaveDirectory() const;
+
+    /**
+     * @brief Run single generation
+     * @return True if generation completed successfully
+     */
+    bool run_generation_();
 };
 
 } // namespace evosim 

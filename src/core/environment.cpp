@@ -179,7 +179,7 @@ uint32_t Environment::performSelection() {
 }
 
 uint32_t Environment::performReproduction() {
-    uint32_t initial_size = population_.size();
+    (void)population_.size(); // Suppress unused variable warning
     uint32_t target_size = std::min(config_.max_population, 
                                    std::max(config_.min_population, 
                                            static_cast<uint32_t>(population_.size() * 1.1)));
@@ -330,7 +330,7 @@ void Environment::updateStats() {
 }
 
 void Environment::applyAging() {
-    auto now = Clock::now();
+    (void)Clock::now(); // Suppress unused variable warning
     
     for (auto& organism : population_) {
         if (organism) {

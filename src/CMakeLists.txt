@@ -1,6 +1,5 @@
-# Source files
-set(SOURCES
-    main.cpp
+# Source files for library (excluding main.cpp)
+set(LIB_SOURCES
     core/organism.cpp
     core/environment.cpp
     core/bytecode_vm.cpp
@@ -27,18 +26,24 @@ set(HEADERS
     utils/random_generator.h
 )
 
-# Create executable
-add_executable(evosim ${SOURCES})
+# Create library
+add_library(evosim_lib STATIC ${LIB_SOURCES})
 
-# Link libraries
-target_link_libraries(evosim
+# Link libraries for the library
+target_link_libraries(evosim_lib
     ${OpenCV_LIBS}
     ${CMAKE_THREAD_LIBS_INIT}
     ${Boost_LIBRARIES}
 )
 
-# Set compile definitions
-target_compile_definitions(evosim PRIVATE
+# Set compile definitions for the library
+target_compile_definitions(evosim_lib PRIVATE
     $<$<CONFIG:Debug>:DEBUG>
     $<$<CONFIG:Release>:NDEBUG>
-) 
+)
+
+# Create executable that links to the library
+add_executable(evosim main.cpp)
+
+# Link the executable to the library
+target_link_libraries(evosim evosim_lib) 

@@ -107,6 +107,7 @@ void CommandProcessor::initializeCommands() {
 }
 
 bool CommandProcessor::cmdHelp(const std::vector<std::string>& args) {
+    (void)args; // Suppress unused parameter warning
     std::cout << "Available commands:\n";
     std::cout << "  help                    - Show this help message\n";
     std::cout << "  start                   - Start evolution simulation\n";
@@ -128,6 +129,7 @@ bool CommandProcessor::cmdHelp(const std::vector<std::string>& args) {
 }
 
 bool CommandProcessor::cmdStart(const std::vector<std::string>& args) {
+    (void)args; // Suppress unused parameter warning
     if (!engine_) {
         std::cout << "Error: No evolution engine available.\n";
         return false;
@@ -148,6 +150,7 @@ bool CommandProcessor::cmdStart(const std::vector<std::string>& args) {
 }
 
 bool CommandProcessor::cmdStop(const std::vector<std::string>& args) {
+    (void)args; // Suppress unused parameter warning
     if (!engine_) {
         std::cout << "Error: No evolution engine available.\n";
         return false;
@@ -168,6 +171,7 @@ bool CommandProcessor::cmdStop(const std::vector<std::string>& args) {
 }
 
 bool CommandProcessor::cmdPause(const std::vector<std::string>& args) {
+    (void)args; // Suppress unused parameter warning
     if (!engine_) {
         std::cout << "Error: No evolution engine available.\n";
         return false;
@@ -188,6 +192,7 @@ bool CommandProcessor::cmdPause(const std::vector<std::string>& args) {
 }
 
 bool CommandProcessor::cmdResume(const std::vector<std::string>& args) {
+    (void)args; // Suppress unused parameter warning
     if (!engine_) {
         std::cout << "Error: No evolution engine available.\n";
         return false;
@@ -208,6 +213,7 @@ bool CommandProcessor::cmdResume(const std::vector<std::string>& args) {
 }
 
 bool CommandProcessor::cmdStatus(const std::vector<std::string>& args) {
+    (void)args; // Suppress unused parameter warning
     if (!engine_) {
         std::cout << "Error: No evolution engine available.\n";
         return false;
@@ -230,6 +236,7 @@ bool CommandProcessor::cmdStatus(const std::vector<std::string>& args) {
 }
 
 bool CommandProcessor::cmdStats(const std::vector<std::string>& args) {
+    (void)args; // Suppress unused parameter warning
     if (!engine_) {
         std::cout << "Error: No evolution engine available.\n";
         return false;
@@ -252,6 +259,7 @@ bool CommandProcessor::cmdStats(const std::vector<std::string>& args) {
 }
 
 bool CommandProcessor::cmdConfig(const std::vector<std::string>& args) {
+    (void)args; // Suppress unused parameter warning
     if (!engine_) {
         std::cout << "Error: No evolution engine available.\n";
         return false;
@@ -367,6 +375,7 @@ bool CommandProcessor::cmdOrganism(const std::vector<std::string>& args) {
 }
 
 bool CommandProcessor::cmdPopulation(const std::vector<std::string>& args) {
+    (void)args; // Suppress unused parameter warning
     if (!engine_) {
         std::cout << "Error: No evolution engine available.\n";
         return false;
@@ -390,6 +399,7 @@ bool CommandProcessor::cmdPopulation(const std::vector<std::string>& args) {
 }
 
 bool CommandProcessor::cmdGeneration(const std::vector<std::string>& args) {
+    (void)args; // Suppress unused parameter warning
     if (!engine_) {
         std::cout << "Error: No evolution engine available.\n";
         return false;
@@ -409,17 +419,20 @@ bool CommandProcessor::cmdGeneration(const std::vector<std::string>& args) {
 }
 
 bool CommandProcessor::cmdClear(const std::vector<std::string>& args) {
+    (void)args; // Suppress unused parameter warning
     // Simple screen clear
     std::cout << "\033[2J\033[H"; // ANSI escape sequence to clear screen
     return true;
 }
 
 bool CommandProcessor::cmdExit(const std::vector<std::string>& args) {
+    (void)args; // Suppress unused parameter warning
     std::cout << "Exiting EvoSim CLI.\n";
     return true;
 }
 
 bool CommandProcessor::cmdQuit(const std::vector<std::string>& args) {
+    (void)args; // Suppress unused parameter warning
     std::cout << "Exiting EvoSim CLI.\n";
     return true;
 }
