@@ -35,6 +35,18 @@ public:
         TimePoint last_replication;     ///< Last replication time
         uint32_t replication_count;     ///< Number of successful replications
         uint32_t mutation_count;        ///< Total mutations accumulated
+        uint32_t some_other_field;
+
+        Stats(uint64_t id_)
+            : id(id_), generation(0), parent_id(0), fitness_score(0.0),
+              birth_time(Clock::now()), last_replication(birth_time),
+              replication_count(0), mutation_count(0), some_other_field(0) {}
+        Stats() = default;
+        Stats(const Stats&) = default;
+        Stats(Stats&&) noexcept = default;
+        Stats& operator=(const Stats&) = default;
+        Stats& operator=(Stats&&) noexcept = default;
+        ~Stats() = default;
     };
 
     /**
@@ -44,30 +56,13 @@ public:
      */
     explicit Organism(Bytecode bytecode, uint64_t parent_id = 0);
 
-    /**
-     * @brief Copy constructor
-     */
+    // Rule of Five
     Organism(const Organism& other);
-
-    /**
-     * @brief Move constructor
-     */
     Organism(Organism&& other) noexcept;
-
-    /**
-     * @brief Destructor
-     */
-    ~Organism() = default;
-
-    /**
-     * @brief Assignment operator
-     */
     Organism& operator=(const Organism& other);
-
-    /**
-     * @brief Move assignment operator
-     */
     Organism& operator=(Organism&& other) noexcept;
+    ~Organism();
+    void swap(Organism& other) noexcept;
 
     /**
      * @brief Replicate the organism with random mutations
@@ -94,17 +89,6 @@ public:
      * @return Current fitness score
      */
     double getFitnessScore() const;
-
-    /**
-     * @brief Check if organism is alive (can replicate)
-     * @return True if organism can replicate
-     */
-    bool isAlive() const;
-
-    /**
-     * @brief Mark organism as dead
-     */
-    void die();
 
     /**
      * @brief Get organism statistics
@@ -134,7 +118,6 @@ public:
 private:
     Bytecode bytecode_;                ///< Organism's bytecode
     mutable Stats stats_;              ///< Organism statistics (mutable for replication tracking)
-    std::atomic<bool> alive_;          ///< Whether organism is alive
     mutable std::mutex mutex_;         ///< Thread safety mutex
 
     static std::atomic<uint64_t> next_id_;  ///< Next available organism ID

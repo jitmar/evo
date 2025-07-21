@@ -2,6 +2,7 @@
 #include <random>
 #include <sstream>
 #include <iomanip>
+#include <iostream>
 
 // TODO: For high-performance scenarios, consider using dedicated mutexes for independent properties
 // instead of a single mutex_ for the entire Organism. This would allow greater concurrency at the
@@ -13,73 +14,63 @@ namespace evosim {
 std::atomic<uint64_t> Organism::next_id_{1};
 
 Organism::Organism(Bytecode bytecode, uint64_t parent_id)
-    : bytecode_(std::move(bytecode))
-    , alive_(true) {
-    
-    stats_.id = next_id_++;
+    : bytecode_(std::move(bytecode)),
+      stats_(next_id_++)
+{
+    // Only set fields not already set by Stats(uint64_t id_)
     stats_.generation = (parent_id == 0) ? 0 : 1;
     stats_.parent_id = parent_id;
-    stats_.fitness_score = 0.0;
-    stats_.birth_time = Clock::now();
-    stats_.last_replication = stats_.birth_time;
-    stats_.replication_count = 0;
-    stats_.mutation_count = 0;
 }
 
 Organism::Organism(const Organism& other)
-    : bytecode_(other.bytecode_)
-    , alive_(other.alive_.load()) {
-    
+    : bytecode_(other.bytecode_),
+      stats_(other.stats_)
+{
+    // Copy constructor: assign new unique id, set parent_id to original's id
     stats_.id = next_id_++;
-    stats_.generation = other.stats_.generation;
-    stats_.parent_id = other.stats_.id;  // This organism is a copy
-    stats_.fitness_score = other.stats_.fitness_score;
+    stats_.parent_id = other.stats_.id;
     stats_.birth_time = Clock::now();
     stats_.last_replication = stats_.birth_time;
     stats_.replication_count = 0;
-    stats_.mutation_count = 0;
+    stats_.mutation_count = other.stats_.mutation_count;
+    // generation, fitness_score, etc. are copied as-is
 }
 
 Organism::Organism(Organism&& other) noexcept
-    : bytecode_(std::move(other.bytecode_))
-    , stats_(other.stats_)
-    , alive_(other.alive_.load()) {
-    
-    // Keep the original ID for move semantics
-    // Don't generate a new ID since we're moving, not copying
+    : bytecode_(std::move(other.bytecode_)),
+      stats_(std::move(other.stats_))
+{
+    // Move constructor
 }
 
 Organism& Organism::operator=(const Organism& other) {
     if (this != &other) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        std::lock_guard<std::mutex> other_lock(other.mutex_);
-        
-        bytecode_ = other.bytecode_;
-        alive_ = other.alive_.load();
-        stats_.fitness_score = other.stats_.fitness_score;
-        // Don't copy ID, generation, or timestamps
+        Organism temp(other); // invokes copy constructor (assigns new id, etc.)
+        swap(temp);
     }
     return *this;
 }
 
 Organism& Organism::operator=(Organism&& other) noexcept {
     if (this != &other) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        std::lock_guard<std::mutex> other_lock(other.mutex_);
-        
-        bytecode_ = std::move(other.bytecode_);
-        stats_ = other.stats_;  // Move the entire stats
-        alive_ = other.alive_.load();
+        Organism temp(std::move(other)); // invokes move constructor (preserves id)
+        swap(temp);
     }
     return *this;
 }
 
+Organism::~Organism() = default;
+
+void Organism::swap(Organism& other) noexcept
+{
+    using std::swap;
+    swap(bytecode_, other.bytecode_);
+    swap(stats_, other.stats_);
+    // Add swap for any other members if needed
+}
+
 Organism::OrganismPtr Organism::replicate(double mutation_rate, uint32_t max_mutations) const {
     std::lock_guard<std::mutex> lock(mutex_);
-    
-    if (!alive_) {
-        return nullptr;
-    }
     
     // Create new bytecode with mutations
     Bytecode new_bytecode = bytecode_;
@@ -107,16 +98,6 @@ double Organism::getFitnessScore() const {
     return stats_.fitness_score;
 }
 
-bool Organism::isAlive() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return alive_;
-}
-
-void Organism::die() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    alive_ = false;
-}
-
 std::chrono::milliseconds Organism::getAge() const {
     std::lock_guard<std::mutex> lock(mutex_);
     auto now = Clock::now();
@@ -137,7 +118,7 @@ std::string Organism::serialize() const {
     oss << "GENERATION:" << stats_.generation << "\n";
     oss << "PARENT:" << stats_.parent_id << "\n";
     oss << "FITNESS:" << std::fixed << std::setprecision(6) << stats_.fitness_score << "\n";
-    oss << "ALIVE:" << (alive_ ? "1" : "0") << "\n";
+    oss << "ALIVE:" << (true ? "1" : "0") << "\n"; // Always serialize as alive
     oss << "BYTECODE_SIZE:" << bytecode_.size() << "\n";
     oss << "BYTECODE:";
     
@@ -180,7 +161,7 @@ bool Organism::deserialize(const std::string& data) {
         } else if (key == "FITNESS") {
             stats_.fitness_score = std::stod(value);
         } else if (key == "ALIVE") {
-            alive_ = (value == "1");
+            // Always set alive to true on deserialize
         } else if (key == "BYTECODE_SIZE") {
             size_t size = std::stoul(value);
             bytecode_.reserve(size);

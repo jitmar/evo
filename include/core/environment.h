@@ -22,7 +22,7 @@ namespace evosim {
 class Environment {
 public:
     using OrganismPtr = Organism::OrganismPtr;
-    using Population = std::vector<OrganismPtr>;
+    using Population = std::unordered_map<uint64_t, std::shared_ptr<Organism>>;
     using Clock = std::chrono::steady_clock;
     using TimePoint = Clock::time_point;
 
@@ -209,6 +209,12 @@ private:
     mutable std::mt19937 rng_;          ///< Random number generator
     mutable std::mutex mutex_;          ///< Thread safety mutex
 
+    void apply_resource_scarcity_();
+    void apply_random_catastrophe_();
+    void apply_predation_();
+    void apply_selection_pressure_();
+    void apply_environmental_pressures_unlocked_();
+
     /**
      * @brief Generate random bytecode
      * @param size Bytecode size
@@ -248,10 +254,7 @@ private:
      */
     void calculateFitnessStats();
 
-    /**
-     * @brief Sort population by fitness
-     */
-    void sortPopulationByFitness();
+    std::vector<std::shared_ptr<Organism>> select_for_reproduction_unlocked_(uint32_t count) const;
 };
 
 } // namespace evosim 

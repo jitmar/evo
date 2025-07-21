@@ -29,11 +29,9 @@ EvolutionEngine::~EvolutionEngine() {
 }
 
 bool EvolutionEngine::start() {
-    std::cerr << "[DEBUG] EvolutionEngine::start() called\n";
     std::lock_guard<std::mutex> lock(mutex_);
     
     if (running_) {
-        std::cerr << "[DEBUG] EvolutionEngine::start() - already running\n";
         return false; // Already running
     }
     
@@ -49,30 +47,24 @@ bool EvolutionEngine::start() {
         evolution_thread_ = std::thread(&EvolutionEngine::evolutionLoop, this);
         
         emitEvent({EventType::ENGINE_STARTED, 0, Clock::now(), "Evolution engine started", 0.0, 0});
-        std::cerr << "[DEBUG] EvolutionEngine::start() - thread started\n";
         return true;
     } catch (const std::exception& e) {
         running_ = false;
-        std::cerr << "[DEBUG] EvolutionEngine::start() - exception: " << e.what() << "\n";
         return false;
     }
 }
 
 bool EvolutionEngine::stop() {
-    std::cerr << "[DEBUG] EvolutionEngine::stop() called\n";
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!running_) {
-            std::cerr << "[DEBUG] EvolutionEngine::stop() - not running\n";
             return false; // Not running
         }
         should_stop_ = true;
         cv_.notify_all(); // Ensure the evolution thread wakes up if paused
     }
     if (evolution_thread_.joinable()) {
-        std::cerr << "[DEBUG] EvolutionEngine::stop() - joining thread\n";
         evolution_thread_.join();
-        std::cerr << "[DEBUG] EvolutionEngine::stop() - thread joined\n";
     }
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -82,7 +74,6 @@ bool EvolutionEngine::stop() {
         stats_.is_paused = false;
     }
     emitEvent({EventType::ENGINE_STOPPED, stats_.total_generations, Clock::now(), "Evolution engine stopped", 0.0, 0});
-    std::cerr << "[DEBUG] EvolutionEngine::stop() - done\n";
     return true;
 }
 
@@ -119,26 +110,19 @@ bool EvolutionEngine::resume() {
 
 // Rename runGeneration to RunGeneration and make it private
 bool EvolutionEngine::run_generation_() {
-    std::cerr << "[DEBUG] EvolutionEngine::run_generation_() called\n";
     std::lock_guard<std::mutex> lock(mutex_);
 
     // Removed logic_error exception: this method is now private and only called internally.
     if (!running_ || paused_ || should_stop_) {
-        std::cerr << "[DEBUG] EvolutionEngine::run_generation_() - not running, paused, or should_stop_\n";
         return false;
     }
     try {
         // Run one generation
         if (environment_) {
-            std::cerr << "[DEBUG] EvolutionEngine::run_generation_() - getting population\n";
             auto organisms = environment_->getPopulation();
-            std::cerr << "[DEBUG] EvolutionEngine::run_generation_() - population size: " << organisms.size() << "\n";
             for (size_t i = 0; i < organisms.size(); ++i) {
-                std::cerr << "[DEBUG] EvolutionEngine::run_generation_() - evaluating fitness for organism " << i << "\n";
                 (void)environment_->evaluateFitness(organisms[i]);
-                std::cerr << "[DEBUG] EvolutionEngine::run_generation_() - evaluated fitness for organism " << i << "\n";
             }
-            std::cerr << "[DEBUG] EvolutionEngine::run_generation_() - finished fitness evaluation loop\n";
             // Apply selection and reproduction
             // This would be implemented based on the environment's capabilities
             stats_.total_generations++;
@@ -147,11 +131,9 @@ bool EvolutionEngine::run_generation_() {
             updateStats();
             performPeriodicTasks(stats_.total_generations);
         }
-        std::cerr << "[DEBUG] EvolutionEngine::run_generation_() - done\n";
         return true;
     } catch (const std::exception& e) {
         emitEvent({EventType::ERROR_OCCURRED, stats_.total_generations, Clock::now(), "Error in generation: " + std::string(e.what()), 0.0, 0});
-        std::cerr << "[DEBUG] EvolutionEngine::run_generation_() - exception: " << e.what() << "\n";
         return false;
     }
 }
@@ -181,7 +163,7 @@ EvolutionEngine::EngineStats EvolutionEngine::getStats() const {
             double best_fitness = 0.0;
             
             for (const auto& organism : organisms) {
-                double fitness = environment_->evaluateFitness(organism);
+                double fitness = environment_->evaluateFitness(organism.second);
                 total_fitness += fitness;
                 best_fitness = std::max(best_fitness, fitness);
             }
@@ -309,7 +291,6 @@ bool EvolutionEngine::exportData(const std::string& filename) const {
 }
 
 void EvolutionEngine::evolutionLoop() {
-    std::cerr << "[DEBUG] EvolutionEngine::evolutionLoop() started\n";
     int loop_count = 0;
     (void)loop_count;
     while (true) {
@@ -318,20 +299,15 @@ void EvolutionEngine::evolutionLoop() {
             break;
         }
         if (paused_) {
-            std::cerr << "[DEBUG] EvolutionEngine::evolutionLoop() - paused, waiting\n";
             cv_.wait(lock, [this] { return !paused_ || should_stop_; });
-            std::cerr << "[DEBUG] EvolutionEngine::evolutionLoop() - woke from pause, paused_=" << paused_ << ", should_stop_=" << should_stop_ << "\n";
             if (should_stop_) {
                 break;
             }
             continue;
         }
         lock.unlock();
-        std::cerr << "[DEBUG] EvolutionEngine::evolutionLoop() - calling run_generation_()\n";
         bool gen_result = run_generation_();
-        std::cerr << "[DEBUG] EvolutionEngine::evolutionLoop() - run_generation_() returned " << gen_result << "\n";
         if (!gen_result || should_stop_) {
-            std::cerr << "[DEBUG] EvolutionEngine::evolutionLoop() - breaking after run_generation_\n";
             break;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -343,7 +319,6 @@ void EvolutionEngine::evolutionLoop() {
         stats_.is_running = false;
         stats_.is_paused = false;
     }
-    std::cerr << "[DEBUG] EvolutionEngine::evolutionLoop() exiting\n";
 }
 
 void EvolutionEngine::emitEvent(const Event& event) {

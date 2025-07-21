@@ -27,7 +27,13 @@ TEST_F(OrganismTest, Constructor) {
     EXPECT_EQ(organism.getStats().generation, 0);
     EXPECT_EQ(organism.getStats().parent_id, 0);
     EXPECT_EQ(organism.getFitnessScore(), 0.0);
-    EXPECT_TRUE(organism.isAlive());
+    // Example replacement for an alive/dead test:
+    // Add organism to environment
+    // environment_->addOrganism(organism);
+    // EXPECT_TRUE(environment_->getOrganism(organism->getStats().id) != nullptr);
+    // Remove organism from environment
+    // environment_->removeOrganism(organism->getStats().id);
+    // EXPECT_TRUE(environment_->getOrganism(organism->getStats().id) == nullptr);
 }
 
 TEST_F(OrganismTest, Replication) {
@@ -39,7 +45,6 @@ TEST_F(OrganismTest, Replication) {
     EXPECT_NE(child->getStats().id, parent.getStats().id);
     EXPECT_EQ(child->getStats().parent_id, parent.getStats().id);
     EXPECT_EQ(child->getStats().generation, parent.getStats().generation + 1);
-    EXPECT_TRUE(child->isAlive());
 }
 
 TEST_F(OrganismTest, FitnessScore) {
@@ -50,15 +55,6 @@ TEST_F(OrganismTest, FitnessScore) {
     
     organism.setFitnessScore(1.0);
     EXPECT_EQ(organism.getFitnessScore(), 1.0);
-}
-
-TEST_F(OrganismTest, Lifecycle) {
-    Organism organism(test_bytecode_);
-    
-    EXPECT_TRUE(organism.isAlive());
-    
-    organism.die();
-    EXPECT_FALSE(organism.isAlive());
 }
 
 TEST_F(OrganismTest, Age) {
