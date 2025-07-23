@@ -1,4 +1,4 @@
-#include <gtest/gtest.h>
+#include "test_common.h"
 #include "core/symmetry_analyzer.h"
 
 namespace evosim {

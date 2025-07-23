@@ -16,6 +16,9 @@ set(TEST_SOURCES
 # Create test executable
 add_executable(evosim_tests ${TEST_SOURCES})
 
+# Associate common header for IDE support and dependency tracking.
+target_sources(evosim_tests PRIVATE test_common.h)
+
 # Link libraries for tests
 target_link_libraries(evosim_tests PRIVATE
     evosim_lib          # Our main library, which brings its PUBLIC dependencies (like OpenCV) with it.

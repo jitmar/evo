@@ -1,4 +1,4 @@
-#include <gtest/gtest.h>
+#include "test_common.h"
 #include "core/environment.h"
 #include "core/organism.h"
 
