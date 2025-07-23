@@ -17,7 +17,7 @@ BytecodeVM::Image BytecodeVM::execute(const Bytecode& bytecode) {
     
     // Copy bytecode to memory
     size_t copy_size = std::min(bytecode.size(), static_cast<size_t>(config_.memory_size));
-    std::copy(bytecode.begin(), bytecode.begin() + copy_size, state_.memory.begin());
+    std::copy(bytecode.begin(), bytecode.begin() + static_cast<ptrdiff_t>(copy_size), state_.memory.begin());
     
     // Execute bytecode
     while (state_.running && state_.pc < state_.memory.size() && 
@@ -39,12 +39,12 @@ BytecodeVM::Image BytecodeVM::execute(const Bytecode& bytecode) {
 
 BytecodeVM::Image BytecodeVM::execute(const Bytecode& bytecode, const VMState& initial_state) {
     state_ = initial_state;
-    canvas_ = cv::Mat::zeros(config_.image_height, config_.image_width, CV_8UC3);
+    canvas_ = cv::Mat::zeros(static_cast<int>(config_.image_height), static_cast<int>(config_.image_width), CV_8UC3);
     resetStats();
     
     // Copy bytecode to memory
     size_t copy_size = std::min(bytecode.size(), static_cast<size_t>(config_.memory_size));
-    std::copy(bytecode.begin(), bytecode.begin() + copy_size, state_.memory.begin());
+    std::copy(bytecode.begin(), bytecode.begin() + static_cast<ptrdiff_t>(copy_size), state_.memory.begin());
     
     // Execute bytecode
     while (state_.running && state_.pc < state_.memory.size() && 
@@ -457,7 +457,7 @@ bool BytecodeVM::executeInstruction(Opcode opcode, uint8_t operand) {
             return true;
             
         case Opcode::RANDOM:
-            if (!pushStack(rng_() % 256)) {
+            if (!pushStack(static_cast<uint8_t>(rng_() % 256))) {
                 last_stats_.error_message = "Stack overflow";
                 return false;
             }
@@ -542,7 +542,7 @@ bool BytecodeVM::peekStack(uint8_t& value) const {
 
 void BytecodeVM::drawPixel() {
     if (isInBounds(state_.x, state_.y)) {
-        cv::Vec3b& pixel = canvas_.at<cv::Vec3b>(state_.y, state_.x);
+        cv::Vec3b& pixel = canvas_.at<cv::Vec3b>(static_cast<int>(state_.y), static_cast<int>(state_.x));
         pixel[0] = state_.color; // Blue
         pixel[1] = state_.color; // Green
         pixel[2] = state_.color; // Red
@@ -562,7 +562,7 @@ void BytecodeVM::initializeState() {
     state_.color = 0;
     state_.running = true;
     
-    canvas_ = cv::Mat::zeros(config_.image_height, config_.image_width, CV_8UC3);
+    canvas_ = cv::Mat::zeros(static_cast<int>(config_.image_height), static_cast<int>(config_.image_width), CV_8UC3);
     resetStats();
 }
 

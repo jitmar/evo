@@ -241,7 +241,7 @@ void RandomGenerator::initialize() {
 uint64_t RandomGenerator::generateTimeSeed() const {
     auto now = std::chrono::high_resolution_clock::now();
     auto duration = now.time_since_epoch();
-    return std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count());
 }
 
 uint64_t RandomGenerator::generateHardwareSeed() const {

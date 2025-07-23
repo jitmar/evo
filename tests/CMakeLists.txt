@@ -17,13 +17,11 @@ set(TEST_SOURCES
 add_executable(evosim_tests ${TEST_SOURCES})
 
 # Link libraries for tests
-target_link_libraries(evosim_tests
-    evosim_lib
-    GTest::gtest
-    GTest::gtest_main
-    ${OpenCV_LIBS}
-    ${CMAKE_THREAD_LIBS_INIT}
-    ${Boost_LIBRARIES}
+target_link_libraries(evosim_tests PRIVATE
+    evosim_lib          # Our main library, which brings its PUBLIC dependencies (like OpenCV) with it.
+    GTest::gtest        # The Google Test library.
+    GTest::gtest_main   # Provides the main() function for the test runner.
+    Threads::Threads    # Explicitly link to the threads library, as it's needed by engine tests.
 )
 
 # Add tests

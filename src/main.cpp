@@ -22,8 +22,8 @@ void printBanner() {
 ║                    EVOSIM - Evolution Simulator              ║
 ║                                                              ║
 ║  A virtual environment for programmable organism evolution   ║
-║  featuring self-replicating programs with symmetry-based    ║
-║  fitness evaluation and bytecode virtual machines.          ║
+║  featuring self-replicating programs with symmetry-based     ║
+║  fitness evaluation and bytecode virtual machines.           ║
 ║                                                              ║
 ║  Version: 0.1.0                                              ║
 ║  License: GPL v3.0                                           ║
@@ -35,18 +35,17 @@ void printBanner() {
  * @brief Print program usage
  */
 void printUsage() {
-    std::cout << "Usage: evosim [options] [command]\n\n";
+    std::cout << "Usage: evosim [options] <command>\n\n";
     std::cout << "Commands:\n";
-    std::cout << "  start     Start evolution simulation\n";
-    std::cout << "  stop      Stop evolution simulation\n";
-    std::cout << "  pause     Pause evolution simulation\n";
-    std::cout << "  resume    Resume evolution simulation\n";
-    std::cout << "  status    Show simulation status\n";
-    std::cout << "  stats     Show detailed statistics\n";
-    std::cout << "  config    Show/modify configuration\n";
-    std::cout << "  save      Save current state\n";
-    std::cout << "  load      Load state from file\n";
-    std::cout << "  export    Export evolution data\n";
+    std::cout << "  start     Start the evolution simulation server in the background.\n";
+    std::cout << "  stop      Stop the running evolution server.\n";
+    std::cout << "  pause     Pause the simulation.\n";
+    std::cout << "  resume    Resume a paused simulation.\n";
+    std::cout << "  status    Show the current status of the simulation.\n";
+    std::cout << "  stats     Show detailed statistics from the simulation.\n";
+    std::cout << "  config    View or modify the server's configuration.\n";
+    std::cout << "  save      Request the server to save the current state.\n";
+    std::cout << "  load      Request the server to load state from a file.\n";
     std::cout << "  help      Show this help message\n";
     std::cout << "\nExamples:\n";
     std::cout << "  evosim --config evosim.conf start\n";
@@ -123,11 +122,45 @@ bool initializeLogging(const po::variables_map& vm) {
     
     // Initialize logger
     evosim::initializeLogger(config);
-    
-    std::cout << "EvoSim Evolution Simulator starting up" << std::endl;
-    std::cout << "Log level: " << log_level << std::endl;
-    
     return true;
+}
+
+/**
+ * @brief Create controller configuration from command line arguments
+ */
+evosim::EvolutionController::Config createControllerConfig(const po::variables_map& vm) {
+    evosim::EvolutionController::Config config;
+
+    if (vm.count("config")) {
+        config.config_file = vm["config"].as<std::string>();
+    } else {
+        config.config_file = "evosim.conf"; // Default
+    }
+
+    if (vm.count("log-file")) {
+        config.log_file = vm["log-file"].as<std::string>();
+    }
+
+    config.enable_colors = !vm.count("no-colors");
+    config.enable_interactive = vm.count("interactive");
+
+    return config;
+}
+
+/**
+ * @brief Placeholder for client logic to send commands to the server.
+ */
+bool sendCommandToServer(const std::string& command, const po::variables_map& vm) {
+    // In a real implementation, this function would use a client library
+    // (e.g., for TCP sockets or HTTP) to connect to the running daemon
+    // and send the command and its arguments.
+    // For now, it's a placeholder.
+    std::cout << "[Client] Connecting to server to send command: '" << command << "'..." << std::endl;
+
+    // TODO: Implement IPC client logic here.
+    std::cerr << "[Client] IPC not yet implemented. Cannot connect to server." << std::endl;
+    
+    return false; // Return false to indicate failure until implemented.
 }
 
 /**
@@ -156,55 +189,57 @@ int main(int argc, char* argv[]) {
         
         // Initialize logging
         if (!initializeLogging(vm)) {
+            // Can't use logger here, so std::cerr is appropriate
+            std::cerr << "Fatal: Failed to initialize logging system." << std::endl;
             return 1;
         }
         
+        evosim::log_info("EvoSim Evolution Simulator starting up");
+        evosim::log_info("Log level set to: " + vm["log-level"].as<std::string>());
+
         // Set random seed
         if (vm.count("seed")) {
             uint64_t seed = vm["seed"].as<uint64_t>();
             evosim::RandomGenerator::setGlobalSeed(seed);
-            std::cout << "Random seed set to: " << seed << std::endl;
+            evosim::log_info("Global random seed set to: " + std::to_string(seed));
         }
         
         // Create evolution controller
-        evosim::EvolutionController::Config controller_config;
-        controller_config.enable_interactive = vm.count("interactive");
-        controller_config.enable_auto_save = true;
-        controller_config.config_file = "evosim.conf";
-        controller_config.log_file = "evosim.log";
-        controller_config.enable_colors = !vm.count("no-colors");
-        controller_config.enable_progress = true;
-        controller_config.max_history = 1000;
-        controller_config.enable_completion = true;
-        
+        auto controller_config = createControllerConfig(vm);
         evosim::EvolutionController controller(controller_config);
         
         // Initialize controller
         if (!controller.initialize()) {
-            std::cerr << "Failed to initialize evolution controller" << std::endl;
+            evosim::log_error("Failed to initialize evolution controller");
             return 1;
         }
         
         // Execute command or run interactively
         if (vm.count("command")) {
-            std::string command = vm["command"].as<std::string>();
-            std::cout << "Executing command: " << command << std::endl;
-            
-            if (!controller.processCommand(command)) {
-                std::cerr << "Failed to execute command: " << command << std::endl;
-                return 1;
+            const std::string command = vm["command"].as<std::string>();
+
+            if (command == "start") {
+                // --- SERVER PATH ---
+                // The 'start' command launches the main evolution controller as a daemon.
+                evosim::log_info("Starting EvoSim server...");
+                // runAsDaemon() will contain the server loop that listens for client commands.
+                // This method will block until a 'stop' command is received.
+                return controller.runAsDaemon();
+            } else {
+                // --- CLIENT PATH ---
+                // All other commands are sent to the running server process.
+                if (sendCommandToServer(command, vm)) {
+                    return 0;
+                } else {
+                    std::cerr << "Failed to communicate with EvoSim server. Is it running?" << std::endl;
+                    return 1;
+                }
             }
-        } else if (controller.getConfig().enable_interactive) {
-            // Run in interactive mode
-            std::cout << "Starting interactive mode" << std::endl;
-            return controller.runInteractive();
         } else {
-            // Run with command line arguments
-            std::cout << "Starting non-interactive mode" << std::endl;
-            return controller.run(argc, argv);
+            printBanner();
+            printUsage();
         }
-        
-        std::cout << "EvoSim completed successfully" << std::endl;
+
         return 0;
         
     } catch (const std::exception& e) {

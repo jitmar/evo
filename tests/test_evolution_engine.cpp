@@ -79,16 +79,6 @@ TEST_F(EvolutionEngineTest, GetEnvironment) {
     EXPECT_NE(environment, nullptr);
 }
 
-// Manual mode: runGeneration() only, do not call start()
-// TEST_F(EvolutionEngineTest, RunGenerations) {
-//     // Run for a few generations manually
-//     for (int i = 0; i < 5; ++i) {
-//         EXPECT_TRUE(engine_->runGeneration());
-//     }
-//     auto stats = engine_->getStats();
-//     EXPECT_GE(stats.total_generations, 5);
-// }
-
 // Threaded mode: start() and let the engine run generations automatically
 TEST_F(EvolutionEngineTest, RunGenerationsThreaded) {
     EXPECT_TRUE(engine_->start());

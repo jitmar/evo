@@ -11,8 +11,6 @@ SymmetryAnalyzer::SymmetryAnalyzer(const Config& config)
     : config_(config) {
 }
 
-
-
 SymmetryAnalyzer::SymmetryResult SymmetryAnalyzer::analyze(const Image& image) {
     SymmetryResult result;
     
@@ -34,7 +32,7 @@ SymmetryAnalyzer::SymmetryResult SymmetryAnalyzer::analyze(const Image& image) {
         result.rotational_symmetry
     };
     
-    result.overall_symmetry = std::accumulate(symmetries.begin(), symmetries.end(), 0.0) / symmetries.size();
+    result.overall_symmetry = std::accumulate(symmetries.begin(), symmetries.end(), 0.0) / static_cast<double>(symmetries.size());
     
     // Calculate fitness score
     result.fitness_score = calculateFitnessScore(result);

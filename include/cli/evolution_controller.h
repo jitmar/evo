@@ -1,292 +1,98 @@
 #pragma once
 
-#include "core/evolution_engine.h"
-#include "command_processor.h"
 #include <memory>
 #include <string>
 #include <thread>
 #include <atomic>
 
+// Forward declaration for EvolutionEngine to reduce header dependencies.
+// The full definition will be included in the .cpp file.
+namespace evosim {
+class EvolutionEngine;
+}
+
 namespace evosim {
 
 /**
- * @brief High-level controller for evolution simulation
+ * @brief Manages the lifecycle of the EvolutionEngine.
  * 
- * Provides a unified interface for controlling the evolution process,
- * managing the CLI, and handling user interactions.
+ * This controller is responsible for running the evolution simulation as a
+ * background service (daemon). It initializes the engine, runs the simulation
+ * in a dedicated thread, and provides a mechanism for graceful shutdown. It is
+ * designed to be controlled by an external interface, such as a network server
+ * or an interactive shell, but is not responsible for that interface itself.
  */
 class EvolutionController {
 public:
-    using EnginePtr = std::shared_ptr<EvolutionEngine>;
-    using ProcessorPtr = std::shared_ptr<CommandProcessor>;
-
     /**
-     * @brief Controller configuration
+     * @brief Configuration for the core controller.
      */
     struct Config {
-        bool enable_cli;              ///< Enable CLI interface
-        bool enable_interactive;      ///< Enable interactive mode
-        bool enable_auto_save;        ///< Enable automatic saving
-        std::string config_file;      ///< Configuration file
-        std::string log_file;         ///< Log file
-        bool enable_colors;           ///< Enable colored output
-        bool enable_progress;         ///< Enable progress indicators
-        uint32_t max_history;         ///< Maximum command history
-        bool enable_completion;       ///< Enable command completion
-        
-        Config() : enable_cli(true), enable_interactive(true), enable_auto_save(true),
-                   config_file("evosim.conf"), log_file("evosim.log"), enable_colors(true),
-                   enable_progress(true), max_history(1000), enable_completion(true) {}
-    };
-
-    /**
-     * @brief Controller state
-     */
-    enum class State {
-        INITIALIZED,        ///< Controller initialized
-        RUNNING,           ///< Evolution running
-        PAUSED,            ///< Evolution paused
-        STOPPED,           ///< Evolution stopped
-        ERROR              ///< Error state
+        std::string config_file;
+        std::string log_file;
+        bool enable_colors;
+        bool enable_interactive;
+        int server_port = 9090; ///< Port for the daemon to listen on.
     };
 
     /**
      * @brief Constructor
-     * @param config Controller configuration
+     * @param config The controller's configuration.
      */
-    explicit EvolutionController(const Config& config = Config());
+    explicit EvolutionController(const Config& config);
 
     /**
-     * @brief Destructor
+     * @brief Destructor that ensures clean shutdown.
      */
     ~EvolutionController();
 
+    // Disable copy and move semantics to prevent slicing and ensure single ownership.
+    EvolutionController(const EvolutionController&) = delete;
+    EvolutionController& operator=(const EvolutionController&) = delete;
+    EvolutionController(EvolutionController&&) = delete;
+    EvolutionController& operator=(EvolutionController&&) = delete;
+
     /**
-     * @brief Initialize controller
-     * @return True if initialized successfully
+     * @brief Initializes the controller and the evolution engine.
+     * @return True if initialization was successful.
      */
     bool initialize();
 
     /**
-     * @brief Run controller in interactive mode
-     * @return Exit code
+     * @brief Runs the controller as a background daemon.
+     * 
+     * This method starts the evolution engine in a background thread and then
+     * enters a loop to listen for control commands (e.g., over a network socket).
+     * This method will block until the server is shut down.
+     * @return An exit code for the application.
      */
-    int runInteractive();
-
-    /**
-     * @brief Run controller with command line arguments
-     * @param argc Argument count
-     * @param argv Argument vector
-     * @return Exit code
-     */
-    int run(int argc, char* argv[]);
-
-    /**
-     * @brief Process single command
-     * @param command Command to process
-     * @return True if successful
-     */
-    bool processCommand(const std::string& command);
-
-    /**
-     * @brief Start evolution
-     * @return True if started successfully
-     */
-    bool startEvolution();
-
-    /**
-     * @brief Stop evolution
-     * @return True if stopped successfully
-     */
-    bool stopEvolution();
-
-    /**
-     * @brief Pause evolution
-     * @return True if paused successfully
-     */
-    bool pauseEvolution();
-
-    /**
-     * @brief Resume evolution
-     * @return True if resumed successfully
-     */
-    bool resumeEvolution();
-
-    /**
-     * @brief Get controller state
-     * @return Current state
-     */
-    State getState() const { return state_; }
-
-    /**
-     * @brief Get evolution engine
-     * @return Engine pointer
-     */
-    EnginePtr getEngine() const { return engine_; }
-
-    /**
-     * @brief Get command processor
-     * @return Processor pointer
-     */
-    ProcessorPtr getProcessor() const { return processor_; }
-
-    /**
-     * @brief Get controller configuration
-     * @return Current configuration
-     */
-    const Config& getConfig() const { return config_; }
-
-    /**
-     * @brief Set controller configuration
-     * @param config New configuration
-     */
-    void setConfig(const Config& config) { config_ = config; }
-
-    /**
-     * @brief Load configuration from file
-     * @param filename Configuration file
-     * @return True if loaded successfully
-     */
-    bool loadConfig(const std::string& filename);
-
-    /**
-     * @brief Save configuration to file
-     * @param filename Configuration file
-     * @return True if saved successfully
-     */
-    bool saveConfig(const std::string& filename);
-
-    /**
-     * @brief Get controller statistics
-     * @return Statistics string
-     */
-    std::string getStatistics() const;
-
-    /**
-     * @brief Shutdown controller
-     * @return True if shutdown successful
-     */
-    bool shutdown();
-
-    /**
-     * @brief Check if controller is running
-     * @return True if running
-     */
-    bool isRunning() const { return state_ == State::RUNNING; }
-
-    /**
-     * @brief Check if controller is paused
-     * @return True if paused
-     */
-    bool isPaused() const { return state_ == State::PAUSED; }
-
-    /**
-     * @brief Wait for evolution to complete
-     * @param timeout_ms Timeout in milliseconds (0 for infinite)
-     * @return True if completed within timeout
-     */
-    bool waitForCompletion(uint32_t timeout_ms = 0);
-
-    /**
-     * @brief Get command history
-     * @return Vector of command history
-     */
-    std::vector<std::string> getCommandHistory() const;
-
-    /**
-     * @brief Clear command history
-     */
-    void clearCommandHistory();
-
-    /**
-     * @brief Export evolution data
-     * @param filename Output filename
-     * @return True if successful
-     */
-    bool exportData(const std::string& filename);
+    int runAsDaemon();
 
 private:
-    Config config_;                     ///< Controller configuration
-    State state_;                       ///< Controller state
-    EnginePtr engine_;                  ///< Evolution engine
-    ProcessorPtr processor_;            ///< Command processor
-    std::thread cli_thread_;            ///< CLI thread
-    std::atomic<bool> should_exit_;     ///< Exit flag
-    std::vector<std::string> history_;  ///< Command history
-    mutable std::mutex mutex_;          ///< Thread safety mutex
+    /**
+     * @brief The main loop for the evolution engine, run in a separate thread.
+     */
+    void runEvolutionLoop();
 
     /**
-     * @brief Initialize evolution engine
-     * @return True if initialized successfully
+     * @brief Signals the server and the evolution loop to stop.
      */
-    bool initializeEngine();
+    void stopServer();
 
     /**
-     * @brief Initialize command processor
-     * @return True if initialized successfully
+     * @brief Handles a single client connection in a blocking manner.
+     * 
+     * This method reads a JSON request from the client, processes the command,
+     * and sends a JSON response back.
+     * @param client_socket The socket descriptor for the connected client.
      */
-    bool initializeProcessor();
+    void handleClientConnection(int client_socket);
 
-    /**
-     * @brief Run CLI loop
-     */
-    void runCLILoop();
-
-    /**
-     * @brief Handle evolution events
-     * @param event Evolution event
-     */
-    void handleEvolutionEvent(const EvolutionEngine::Event& event);
-
-    /**
-     * @brief Update controller state
-     * @param new_state New state
-     */
-    void updateState(State new_state);
-
-    /**
-     * @brief Load default configuration
-     */
-    void loadDefaultConfig();
-
-    /**
-     * @brief Setup signal handlers
-     */
-    void setupSignalHandlers();
-
-    /**
-     * @brief Cleanup resources
-     */
-    void cleanup();
-
-    /**
-     * @brief Print welcome message
-     */
-    void printWelcome() const;
-
-    /**
-     * @brief Print prompt
-     */
-    void printPrompt() const;
-
-    /**
-     * @brief Read command line
-     * @return Command line string
-     */
-    std::string readCommandLine() const;
-
-    /**
-     * @brief Add command to history
-     * @param command Command to add
-     */
-    void addToHistory(const std::string& command);
-
-    /**
-     * @brief Get command completion suggestions
-     * @param partial_command Partial command
-     * @return Vector of suggestions
-     */
-    std::vector<std::string> getCompletions(const std::string& partial_command) const;
+    Config config_;
+    std::unique_ptr<EvolutionEngine> engine_;
+    std::thread evolution_thread_;
+    std::atomic<bool> is_running_{false};
+    int server_socket_ = -1; ///< The listening socket for the daemon.
 };
 
 } // namespace evosim 

@@ -1,0 +1,52 @@
+# Stage 1: The Development Environment
+# This stage has all the build tools and dependencies for interactive development.
+FROM ubuntu:24.04
+
+# Set environment variables
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install system dependencies for building and development.
+# We add gdb for debugging and ccache to speed up repeated compilations.
+RUN apt-get update && apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    git \
+    pkg-config \
+    libopencv-dev \
+    libboost-all-dev \
+    libgtest-dev \
+    gdb \
+    ccache \
+    clang \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Prepend ccache to the PATH to ensure it's used by the compiler.
+ENV PATH="/usr/lib/ccache:${PATH}"
+
+# Create a non-root user for development.
+# Using ARG allows passing the host user's UID/GID at build time.
+# This is crucial to avoid file permission issues when mounting the
+# source code from the host.
+ARG USER_ID=1000
+ARG GROUP_ID=1000
+# Create a group and user to match the host's UID/GID.
+# This prevents file permission issues with mounted volumes.
+# - If a group with GID already exists, we'll use it. Otherwise, create it.
+# - Create the user with the UID, allowing non-unique UIDs ('-o').
+RUN if ! getent group $GROUP_ID > /dev/null; then groupadd -g $GROUP_ID evodev; fi && \
+    useradd --no-log-init -o -u $USER_ID -g $GROUP_ID -m -s /bin/bash evodev
+
+# Set up the application directory.
+# This will be the target for the volume mount from the host.
+WORKDIR /app
+# The source code is not copied during the build. It will be mounted.
+# We just need to ensure the user owns the work directory.
+RUN chown $USER_ID:$GROUP_ID /app
+
+# Switch to the non-root user for the session.
+USER evodev
+
+# Set a default command to drop into a shell for interactive use.
+CMD ["/bin/bash"]

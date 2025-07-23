@@ -14,7 +14,7 @@ namespace evosim {
  */
 enum class LogLevel {
     TRACE = 0,      ///< Trace level (most verbose)
-    DEBUG = 1,      ///< Debug level
+    DBG = 1,      ///< Debug level
     INFO = 2,       ///< Info level
     WARNING = 3,    ///< Warning level
     ERROR = 4,      ///< Error level
@@ -74,7 +74,7 @@ public:
      * @brief Log debug message
      * @param message Log message
      */
-    void debug(const std::string& message) { log(LogLevel::DEBUG, message); }
+    void debug(const std::string& message) { log(LogLevel::DBG, message); }
 
     /**
      * @brief Log info message
@@ -104,32 +104,41 @@ public:
      * @brief Set log level
      * @param level New log level
      */
-    void setLevel(LogLevel level) { config_.level = level; }
+    void setLevel(LogLevel level) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        config_.level = level;
+    }
 
     /**
      * @brief Get log level
      * @return Current log level
      */
-    LogLevel getLevel() const { return config_.level; }
+    LogLevel getLevel() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return config_.level;
+    }
 
     /**
      * @brief Set log file
      * @param filename Log file path
      * @return True if successful
      */
-    bool setLogFile(const std::string& filename);
+    bool setLogFile(const std::string& filename); // Note: Add lock in .cpp implementation
 
     /**
      * @brief Get logger configuration
      * @return Current configuration
      */
-    const LoggerConfig& getConfig() const { return config_; }
+    LoggerConfig getConfig() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return config_;
+    }
 
     /**
      * @brief Set logger configuration
      * @param config New configuration
      */
-    void setConfig(const LoggerConfig& config);
+    void setConfig(const LoggerConfig& config); // Note: Add lock in .cpp implementation
 
     /**
      * @brief Flush log buffers
@@ -154,7 +163,7 @@ public:
      * @param level Log level
      * @return ANSI color code
      */
-    static std::string getLevelColor(LogLevel level);
+    std::string getLevelColor(LogLevel level);
 
     /**
      * @brief Parse log level from string
@@ -178,7 +187,7 @@ public:
 private:
     LoggerConfig config_;                 ///< Logger configuration
     std::ofstream file_stream_;           ///< Log file stream
-    std::mutex mutex_;                    ///< Thread safety mutex
+    mutable std::mutex mutex_;            ///< Thread safety mutex
     std::stringstream buffer_;            ///< Log buffer
 
     /**
@@ -188,13 +197,6 @@ private:
     bool initialize();
 
     /**
-     * @brief Write log message
-     * @param level Log level
-     * @param message Log message
-     */
-    void writeLog(LogLevel level, const std::string& message);
-
-    /**
      * @brief Format log message
      * @param level Log level
      * @param message Log message
@@ -202,17 +204,11 @@ private:
      */
     std::string formatMessage(LogLevel level, const std::string& message);
 
-    /**
-     * @brief Write to console
-     * @param message Message to write
-     */
-    void writeToConsole(const std::string& message);
-
-    /**
-     * @brief Write to file
-     * @param message Message to write
-     */
-    void writeToFile(const std::string& message);
+    // Internal unlocked helpers for thread safety
+    void writeLog_unlocked(LogLevel level, const std::string& message);
+    void writeToConsole_unlocked(LogLevel level, const std::string& message);
+    void writeToFile_unlocked(const std::string& message);
+    void flush_unlocked();
 
     /**
      * @brief Check if log file needs rotation
@@ -260,21 +256,42 @@ Logger* getLogger();
  */
 void shutdownLogger();
 
-/**
- * @brief Log macro for convenience
- */
-#define EVOSIM_LOG(level, message) \
-    do { \
-        if (auto logger = evosim::getLogger()) { \
-            logger->log(level, message); \
-        } \
-    } while(0)
+// --- Inline Logging Functions (Macro-Free Alternative) ---
 
-#define EVOSIM_TRACE(message) EVOSIM_LOG(evosim::LogLevel::TRACE, message)
-#define EVOSIM_DEBUG(message) EVOSIM_LOG(evosim::LogLevel::DEBUG, message)
-#define EVOSIM_INFO(message)  EVOSIM_LOG(evosim::LogLevel::INFO, message)
-#define EVOSIM_WARN(message)  EVOSIM_LOG(evosim::LogLevel::WARNING, message)
-#define EVOSIM_ERROR(message) EVOSIM_LOG(evosim::LogLevel::ERROR, message)
-#define EVOSIM_FATAL(message) EVOSIM_LOG(evosim::LogLevel::FATAL, message)
+inline void log_trace(const std::string& message) {
+    if (auto logger = getLogger()) {
+        logger->trace(message);
+    }
+}
+
+inline void log_debug(const std::string& message) {
+    if (auto logger = getLogger()) {
+        logger->debug(message);
+    }
+}
+
+inline void log_info(const std::string& message) {
+    if (auto logger = getLogger()) {
+        logger->info(message);
+    }
+}
+
+inline void log_warn(const std::string& message) {
+    if (auto logger = getLogger()) {
+        logger->warning(message);
+    }
+}
+
+inline void log_error(const std::string& message) {
+    if (auto logger = getLogger()) {
+        logger->error(message);
+    }
+}
+
+inline void log_fatal(const std::string& message) {
+    if (auto logger = getLogger()) {
+        logger->fatal(message);
+    }
+}
 
 } // namespace evosim 

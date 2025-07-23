@@ -146,17 +146,17 @@ EvolutionEngine::EngineStats EvolutionEngine::getStats() const {
     // Update runtime
     auto now = Clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - stats_.start_time);
-    stats.total_runtime_ms = duration.count();
+    stats.total_runtime_ms = static_cast<uint64_t>(duration.count());
     
     // Calculate generations per second
     if (stats.total_runtime_ms > 0) {
-        stats.generations_per_second = static_cast<double>(stats_.total_generations) / (stats.total_runtime_ms / 1000.0);
+        stats.generations_per_second = static_cast<double>(stats_.total_generations) / (static_cast<double>(stats.total_runtime_ms) / 1000.0);
     }
     
     // Update current population and fitness info
     if (environment_) {
         auto organisms = environment_->getPopulation();
-        stats.current_population = organisms.size();
+        stats.current_population = static_cast<uint32_t>(organisms.size());
         
         if (!organisms.empty()) {
             double total_fitness = 0.0;
@@ -169,7 +169,7 @@ EvolutionEngine::EngineStats EvolutionEngine::getStats() const {
             }
             
             stats.current_best_fitness = best_fitness;
-            stats.current_avg_fitness = total_fitness / organisms.size();
+            stats.current_avg_fitness = total_fitness / static_cast<double>(organisms.size());
         }
     }
     
@@ -339,10 +339,10 @@ void EvolutionEngine::updateStats() {
     // Update basic stats
     auto now = Clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - stats_.start_time);
-    stats_.total_runtime_ms = duration.count();
+    stats_.total_runtime_ms = static_cast<uint64_t>(duration.count());
     
     if (stats_.total_runtime_ms > 0) {
-        stats_.generations_per_second = static_cast<double>(stats_.total_generations) / (stats_.total_runtime_ms / 1000.0);
+        stats_.generations_per_second = static_cast<double>(stats_.total_generations) / (static_cast<double>(stats_.total_runtime_ms) / 1000.0);
     }
 }
 

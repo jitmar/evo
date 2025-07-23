@@ -106,10 +106,6 @@ public:
      */
     Image execute(const Bytecode& bytecode, const VMState& initial_state);
 
-    /**
-     * @brief Get last execution statistics
-     * @return Execution statistics
-     */
     struct ExecutionStats {
         uint32_t instructions_executed;
         uint32_t pixels_drawn;
@@ -119,6 +115,10 @@ public:
         std::string error_message;
     };
 
+    /**
+     * @brief Get last execution statistics.
+     * @return A const reference to the last execution statistics.
+     */
     const ExecutionStats& getLastStats() const { return last_stats_; }
 
     /**

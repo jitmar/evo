@@ -1,122 +1,120 @@
 #include "cli/evolution_controller.h"
+#include "core/evolution_engine.h" // Full definition is required for std::unique_ptr
+#include "core/environment.h"      // Required for creating the environment
+#include "utils/logger.h"
+
+// This implementation will require a JSON library.
+// A common choice is nlohmann/json, which is header-only.
+#include "nlohmann/json.hpp"
+
 #include <chrono>
-#include <thread>
+#include <iostream>
+#include <sys/socket.h> // For read/write on sockets
+#include <unistd.h>     // For close()
+
+// for convenience
+using json = nlohmann::json;
 
 namespace evosim {
 
-EvolutionController::EvolutionController(const Config& config)
-    : config_(config), state_(State::INITIALIZED) {}
+EvolutionController::EvolutionController(const Config& config) : config_(config) {
+    // The EvolutionEngine requires an Environment to be constructed.
+    // We create it here and pass it to the engine's constructor.
+    auto environment = std::make_shared<Environment>();
+    engine_ = std::make_unique<EvolutionEngine>(environment);
+}
 
 EvolutionController::~EvolutionController() {
-    shutdown();
+    if (is_running_.load()) {
+        stopServer();
+    }
+    // Ensure the thread is joined for a clean shutdown
+    if (evolution_thread_.joinable()) {
+        evolution_thread_.join();
+    }
+    if (server_socket_ != -1) {
+        close(server_socket_);
+    }
 }
 
 bool EvolutionController::initialize() {
-    // TODO: Initialize engine, processor, etc.
-    state_ = State::INITIALIZED;
+    evosim::log_info("EvolutionController initialized.");
+    // TODO: Initialize engine_ with settings from config_
     return true;
 }
 
-int EvolutionController::runInteractive() {
-    // TODO: Implement interactive CLI loop
+int EvolutionController::runAsDaemon() {
+    evosim::log_info("runAsDaemon is a placeholder. TCP server logic will be added here.");
+    // In the full implementation, this will create a listening socket
+    // and loop on accept(), calling handleClientConnection for each client.
+
+    // For now, let's just start the background thread and wait for it to finish.
+    is_running_ = true;
+    evosim::log_info("Starting evolution engine in a background thread...");
+    evolution_thread_ = std::thread(&EvolutionController::runEvolutionLoop, this);
+
+    if (evolution_thread_.joinable()) {
+        evolution_thread_.join();
+    }
     return 0;
 }
 
-int EvolutionController::run(int argc, char* argv[]) {
-    (void)argc; // Suppress unused parameter warning
-    (void)argv; // Suppress unused parameter warning
-    // TODO: Parse arguments and run accordingly
-    return 0;
+void EvolutionController::runEvolutionLoop() {
+    evosim::log_info("Evolution loop thread started.");
+    while (is_running_.load()) {
+        // engine_->step(); // This would be the actual call
+        evosim::log_debug("Evolution engine step...");
+        std::this_thread::sleep_for(std::chrono::seconds(5));
+    }
+    evosim::log_info("Evolution loop thread has stopped.");
 }
 
-bool EvolutionController::processCommand(const std::string& command) {
-    (void)command; // Suppress unused parameter warning
-    // TODO: Process command using processor_
-    return true;
+void EvolutionController::stopServer() {
+    evosim::log_info("Stop signal received. Shutting down server...");
+    is_running_ = false;
 }
 
-bool EvolutionController::startEvolution() {
-    // TODO: Start the evolution engine
-    if (engine_ && !engine_->isRunning()) {
-        if (engine_->start()) {
-            state_ = State::RUNNING;
-            return true;
+void EvolutionController::handleClientConnection(int client_socket) {
+    evosim::log_debug("Handling new client connection on socket " + std::to_string(client_socket));
+
+    char buffer[1024] = {0};
+    json response;
+
+    // 1. Read request from client (simplified for now)
+    if (read(client_socket, buffer, sizeof(buffer) - 1) <= 0) {
+        evosim::log_warn("Failed to read from client socket or client disconnected.");
+        close(client_socket);
+        return;
+    }
+
+    // 2. Parse request and process command
+    try {
+        json request = json::parse(buffer);
+        std::string command = request.at("command");
+        evosim::log_info("Received command: '" + command + "'");
+
+        if (command == "status") {
+            response = {{"status", "ok"}, {"data", {{"engine_state", "running"}, {"generation", 42}}}};
+        } else if (command == "stop") {
+            response = {{"status", "ok"}, {"message", "Shutdown signal sent."}};
+            stopServer();
+        } else {
+            response = {{"status", "error"}, {"message", "Unknown command: " + command}};
         }
+
+    } catch (const json::parse_error& e) {
+        response = {{"status", "error"}, {"message", "Invalid JSON request."}};
+        evosim::log_error("JSON parse error: " + std::string(e.what()));
+    } catch (const json::out_of_range& e) {
+        response = {{"status", "error"}, {"message", "Request missing 'command' field."}};
+        evosim::log_error("JSON format error: " + std::string(e.what()));
     }
-    return false;
+
+    // 3. Send response and close connection
+    std::string response_str = response.dump(4); // pretty-print JSON
+    write(client_socket, response_str.c_str(), response_str.length());
+    close(client_socket);
+    evosim::log_debug("Client connection closed.");
 }
 
-bool EvolutionController::stopEvolution() {
-    // TODO: Stop the evolution engine
-    if (engine_ && engine_->isRunning()) {
-        if (engine_->stop()) {
-            state_ = State::STOPPED;
-            return true;
-        }
-    }
-    return false;
-}
-
-bool EvolutionController::pauseEvolution() {
-    // TODO: Pause the evolution engine
-    if (engine_ && engine_->isRunning() && !engine_->isPaused()) {
-        if (engine_->pause()) {
-            state_ = State::PAUSED;
-            return true;
-        }
-    }
-    return false;
-}
-
-bool EvolutionController::resumeEvolution() {
-    // TODO: Resume the evolution engine
-    if (engine_ && engine_->isPaused()) {
-        if (engine_->resume()) {
-            state_ = State::RUNNING;
-            return true;
-        }
-    }
-    return false;
-}
-
-bool EvolutionController::loadConfig(const std::string& filename) {
-    (void)filename; // Suppress unused parameter warning
-    // TODO: Load config from file
-    return true;
-}
-
-bool EvolutionController::saveConfig(const std::string& filename) {
-    (void)filename; // Suppress unused parameter warning
-    // TODO: Save config to file
-    return true;
-}
-
-std::string EvolutionController::getStatistics() const {
-    // TODO: Return statistics string
-    return "";
-}
-
-bool EvolutionController::shutdown() {
-    // TODO: Shutdown engine, processor, cleanup
-    state_ = State::STOPPED;
-    return true;
-}
-
-bool EvolutionController::waitForCompletion(uint32_t timeout_ms) {
-    // TODO: Wait for engine to complete
-    if (engine_) {
-        return engine_->waitForCompletion(timeout_ms);
-    }
-    return false;
-}
-
-std::vector<std::string> EvolutionController::getCommandHistory() const {
-    // TODO: Return command history from processor_
-    return {};
-}
-
-void EvolutionController::clearCommandHistory() {
-    // TODO: Clear command history in processor_
-}
-
-} // namespace evosim 
+} // namespace evosim

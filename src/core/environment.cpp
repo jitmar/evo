@@ -146,7 +146,7 @@ std::vector<std::shared_ptr<Organism>> Environment::select_for_reproduction_unlo
 }
 
 uint32_t Environment::performSelection() {
-    uint32_t initial_size = population_.size();
+    auto initial_size = static_cast<uint32_t>(population_.size());
     // Remove dead organisms (now: just erase nullptrs, but should be empty)
     for (auto it = population_.begin(); it != population_.end(); ) {
         if (!it->second) {
@@ -167,15 +167,15 @@ uint32_t Environment::performSelection() {
     if (config_.enable_cooperation) {
         applyCooperation();
     }
-    uint32_t final_size = population_.size();
+    auto final_size = static_cast<uint32_t>(population_.size());
     return initial_size - final_size;
 }
 
 uint32_t Environment::performReproduction() {
     (void)population_.size(); // Suppress unused variable warning
     uint32_t target_size = std::min(config_.max_population, 
-                                   std::max(config_.min_population, 
-                                           static_cast<uint32_t>(std::ceil(population_.size() * 1.1))));
+                                   std::max(config_.min_population,
+                                           static_cast<uint32_t>(std::ceil(static_cast<double>(population_.size()) * 1.1))));
     std::vector<OrganismPtr> new_organisms;
     const size_t max_iterations = 10 * target_size; // Safety limit
     size_t iterations = 0;
@@ -226,7 +226,7 @@ void Environment::apply_resource_scarcity_() {
     // Calculate sustainable population size based on resource abundance
     uint32_t sustainable_population = static_cast<uint32_t>(config_.max_population * config_.resource_abundance);
     if (population_.size() > sustainable_population) {
-        uint32_t to_remove = static_cast<uint32_t>(population_.size() - sustainable_population);
+        auto to_remove = static_cast<uint32_t>(population_.size() - sustainable_population);
         // Example for random removal (resource scarcity, catastrophe, predation):
         // NOTE: For large populations, shuffling this vector could be a parallelism bottleneck.
         std::vector<uint64_t> ids;
@@ -243,7 +243,7 @@ void Environment::apply_random_catastrophe_() {
     std::uniform_real_distribution<double> chance_dist(0.0, 1.0);
     if (chance_dist(rng_) < 0.01 && !population_.empty()) {
         // Remove 10% of the population (at least 1 if population is small)
-        uint32_t to_remove = std::max<uint32_t>(1, static_cast<uint32_t>(population_.size() * 0.1));
+        uint32_t to_remove = std::max<uint32_t>(1, static_cast<uint32_t>(static_cast<double>(population_.size()) * 0.1));
         // Example for random removal (resource scarcity, catastrophe, predation):
         // NOTE: For large populations, shuffling this vector could be a parallelism bottleneck.
         std::vector<uint64_t> ids;
@@ -258,7 +258,7 @@ void Environment::apply_random_catastrophe_() {
 void Environment::apply_predation_() {
     if (population_.empty()) return;
     // Remove up to 5% of the population (at least 1 if population is small)
-    uint32_t to_remove = std::max<uint32_t>(1, static_cast<uint32_t>(population_.size() * 0.05));
+    uint32_t to_remove = std::max<uint32_t>(1, static_cast<uint32_t>(static_cast<double>(population_.size()) * 0.05));
     std::vector<uint64_t> candidates;
     // Build a list of organism IDs weighted by inverse fitness
     for (const auto& pair : population_) {
@@ -288,7 +288,7 @@ void Environment::apply_selection_pressure_() {
         return;
     }
     // Cull a percentage of the lowest-fitness organisms
-    uint32_t to_remove = std::max<uint32_t>(1, static_cast<uint32_t>(population_.size() * config_.selection_pressure));
+    uint32_t to_remove = std::max<uint32_t>(1, static_cast<uint32_t>(static_cast<double>(population_.size()) * config_.selection_pressure));
     // Sort organism IDs by fitness ascending
     std::vector<std::pair<uint64_t, double>> id_fitness;
     for (const auto& pair : population_) {
@@ -479,17 +479,17 @@ void Environment::calculateFitnessStats() {
     }
     
     if (!fitness_scores.empty()) {
-        stats_.avg_fitness = std::accumulate(fitness_scores.begin(), fitness_scores.end(), 0.0) / fitness_scores.size();
+        stats_.avg_fitness = std::accumulate(fitness_scores.begin(), fitness_scores.end(), 0.0) / static_cast<double>(fitness_scores.size());
         stats_.max_fitness = *std::max_element(fitness_scores.begin(), fitness_scores.end());
         stats_.min_fitness = *std::min_element(fitness_scores.begin(), fitness_scores.end());
         
         // Calculate variance
         double variance = 0.0;
         for (double fitness : fitness_scores) {
-            double diff = fitness - stats_.avg_fitness;
+            const double diff = fitness - stats_.avg_fitness;
             variance += diff * diff;
         }
-        stats_.fitness_variance = variance / fitness_scores.size();
+        stats_.fitness_variance = variance / static_cast<double>(fitness_scores.size());
     }
 }
 

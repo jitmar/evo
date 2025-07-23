@@ -21,13 +21,13 @@ public:
      * @brief Symmetry analysis results
      */
     struct SymmetryResult {
-        double horizontal_symmetry;     ///< Horizontal symmetry score (0-1)
-        double vertical_symmetry;       ///< Vertical symmetry score (0-1)
-        double diagonal_symmetry;       ///< Diagonal symmetry score (0-1)
-        double rotational_symmetry;     ///< Rotational symmetry score (0-1)
-        double overall_symmetry;        ///< Combined symmetry score (0-1)
-        double complexity_score;        ///< Pattern complexity score (0-1)
-        double fitness_score;           ///< Final fitness score (0-1)
+        double horizontal_symmetry{0.0};     ///< Horizontal symmetry score (0-1)
+        double vertical_symmetry{0.0};       ///< Vertical symmetry score (0-1)
+        double diagonal_symmetry{0.0};       ///< Diagonal symmetry score (0-1)
+        double rotational_symmetry{0.0};     ///< Rotational symmetry score (0-1)
+        double overall_symmetry{0.0};        ///< Combined symmetry score (0-1)
+        double complexity_score{0.0};        ///< Pattern complexity score (0-1)
+        double fitness_score{0.0};           ///< Final fitness score (0-1)
         std::vector<double> symmetry_histogram; ///< Symmetry distribution
     };
 

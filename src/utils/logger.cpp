@@ -22,11 +22,14 @@ Logger::~Logger() {
 }
 
 void Logger::log(LogLevel level, const std::string& message) {
+    // Lock to ensure thread-safe access to config and atomic writes
+    std::lock_guard<std::mutex> lock(mutex_);
+
     if (level < config_.level) {
         return;
     }
     
-    writeLog(level, message);
+    writeLog_unlocked(level, message);
 }
 
 bool Logger::setLogFile(const std::string& filename) {
@@ -47,14 +50,7 @@ void Logger::setConfig(const LoggerConfig& config) {
 
 void Logger::flush() {
     std::lock_guard<std::mutex> lock(mutex_);
-    
-    if (file_stream_.is_open()) {
-        file_stream_.flush();
-    }
-    
-    if (config_.auto_flush) {
-        std::cout.flush();
-    }
+    flush_unlocked();
 }
 
 bool Logger::rotate() {
@@ -65,7 +61,7 @@ bool Logger::rotate() {
 std::string Logger::getLevelString(LogLevel level) {
     switch (level) {
         case LogLevel::TRACE:   return "TRACE";
-        case LogLevel::DEBUG:   return "DEBUG";
+        case LogLevel::DBG:   return "DEBUG";
         case LogLevel::INFO:    return "INFO";
         case LogLevel::WARNING: return "WARN";
         case LogLevel::ERROR:   return "ERROR";
@@ -75,16 +71,12 @@ std::string Logger::getLevelString(LogLevel level) {
 }
 
 std::string Logger::getLevelColor(LogLevel level) {
-    // Use a default value for enable_colors, or make this non-static if needed
-    // Here, we assume colors are enabled by default for static context
-    bool enable_colors = true;
-    // If you want to use config_, make this a non-static method
-    if (!enable_colors) {
+    if (!config_.enable_colors) {
         return "";
     }
     switch (level) {
         case LogLevel::TRACE:   return "\033[36m"; // Cyan
-        case LogLevel::DEBUG:   return "\033[34m"; // Blue
+        case LogLevel::DBG:   return "\033[34m"; // Blue
         case LogLevel::INFO:    return "\033[32m"; // Green
         case LogLevel::WARNING: return "\033[33m"; // Yellow
         case LogLevel::ERROR:   return "\033[31m"; // Red
@@ -98,7 +90,7 @@ LogLevel Logger::parseLevel(const std::string& level_str) {
     std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
     
     if (upper == "TRACE") return LogLevel::TRACE;
-    if (upper == "DEBUG") return LogLevel::DEBUG;
+    if (upper == "DEBUG") return LogLevel::DBG;
     if (upper == "INFO") return LogLevel::INFO;
     if (upper == "WARNING" || upper == "WARN") return LogLevel::WARNING;
     if (upper == "ERROR") return LogLevel::ERROR;
@@ -112,11 +104,23 @@ std::string Logger::getTimestamp() {
     auto time_t = std::chrono::system_clock::to_time_t(now);
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         now.time_since_epoch()) % 1000;
-    
+
+    // std::localtime is not thread-safe, use platform-specific alternatives
+    std::tm tm_buf;
+#if defined(__unix__) || (defined(__APPLE__) && defined(__MACH__))
+    localtime_r(&time_t, &tm_buf);
+#elif defined(_MSC_VER)
+    localtime_s(&tm_buf, &time_t);
+#else
+    // Fallback for other platforms, might not be thread-safe without a static mutex
+    static std::mutex mtx;
+    std::lock_guard<std::mutex> lock(mtx);
+    tm_buf = *std::localtime(&time_t);
+#endif
+
     std::ostringstream oss;
-    oss << std::put_time(std::localtime(&time_t), "%Y-%m-%d %H:%M:%S");
+    oss << std::put_time(&tm_buf, "%Y-%m-%d %H:%M:%S");
     oss << '.' << std::setfill('0') << std::setw(3) << ms.count();
-    
     return oss.str();
 }
 
@@ -133,19 +137,19 @@ bool Logger::initialize() {
     return true;
 }
 
-void Logger::writeLog(LogLevel level, const std::string& message) {
-    std::string formatted = formatMessage(level, message);
+void Logger::writeLog_unlocked(LogLevel level, const std::string& message) {
+    std::string formatted_msg = formatMessage(level, message);
     
     if (config_.enable_console) {
-        writeToConsole(formatted);
+        writeToConsole_unlocked(level, formatted_msg);
     }
     
     if (config_.enable_file) {
-        writeToFile(formatted);
+        writeToFile_unlocked(formatted_msg);
     }
     
     if (config_.auto_flush) {
-        flush();
+        flush_unlocked();
     }
 }
 
@@ -185,11 +189,15 @@ std::string Logger::formatMessage(LogLevel level, const std::string& message) {
     return result;
 }
 
-void Logger::writeToConsole(const std::string& message) {
-    std::cout << message << std::endl;
+void Logger::writeToConsole_unlocked(LogLevel level, const std::string& message) {
+    if (config_.enable_colors) {
+        std::cout << getLevelColor(level) << message << "\033[0m" << std::endl;
+    } else {
+        std::cout << message << std::endl;
+    }
 }
 
-void Logger::writeToFile(const std::string& message) {
+void Logger::writeToFile_unlocked(const std::string& message) {
     if (file_stream_.is_open()) {
         file_stream_ << message << std::endl;
     }
@@ -245,6 +253,15 @@ bool Logger::openFile() {
     
     file_stream_.open(config_.filename, std::ios::app);
     return file_stream_.is_open();
+}
+
+void Logger::flush_unlocked() {
+    if (file_stream_.is_open()) {
+        file_stream_.flush();
+    }
+    if (config_.enable_console) {
+        std::cout.flush();
+    }
 }
 
 // Global logger functions
