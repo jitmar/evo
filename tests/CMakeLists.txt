@@ -11,6 +11,7 @@ set(TEST_SOURCES
     test_symmetry_analyzer.cpp
     test_evolution_engine.cpp
     test_environment.cpp
+    test_config_manager.cpp
 )
 
 # Create test executable

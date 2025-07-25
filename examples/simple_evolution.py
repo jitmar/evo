@@ -22,9 +22,13 @@ def check_system():
     """Check if the evolution system is available."""
     print("Checking EvoSim system...")
     
-    # Check if executable exists
+    # Check if executables exist
     if not os.path.exists("./build/bin/evosim"):
-        print("❌ EvoSim executable not found. Please build the project first:")
+        print("❌ EvoSim client executable not found. Please build the project first:")
+        print("   ./scripts/build.sh")
+        return False
+    if not os.path.exists("./build/bin/evosimd"):
+        print("❌ EvoSim daemon executable not found. Please build the project first:")
         print("   ./scripts/build.sh")
         return False
     
@@ -40,46 +44,40 @@ def check_system():
 
 def create_config():
     """Create a simple configuration for the example."""
-    config = """[environment]
-initial_population = 50
-max_population = 200
-mutation_rate = 0.02
-generation_time_ms = 500
+    # This configuration is now in YAML format.
+    config = """
+environment:
+  initial_population: 50
+  max_population: 200
+  mutation_rate: 0.02
+  generation_time_ms: 500
 
-[bytecode_vm]
-image_width = 128
-image_height = 128
-max_instructions = 5000
+bytecode_vm:
+  image_width: 128
+  image_height: 128
+  max_instructions: 5000
 
-[symmetry_analyzer]
-horizontal_weight = 0.3
-vertical_weight = 0.3
-diagonal_weight = 0.2
-rotational_weight = 0.2
+symmetry_analyzer:
+  horizontal_weight: 0.3
+  vertical_weight: 0.3
+  diagonal_weight: 0.2
+  rotational_weight: 0.2
 
-[evolution_engine]
-save_interval_generations = 50
-enable_visualization = false
-
-[logger]
-level = info
-enable_console = true
-enable_file = false
+evolution_engine:
+  save_interval_generations: 50
 """
     
-    with open("example_config.conf", "w") as f:
+    with open("example_config.yaml", "w") as f:
         f.write(config)
     
-    print("✅ Created example configuration: example_config.conf")
+    print("✅ Created example configuration: example_config.yaml")
 
 def run_simple_evolution():
     """Run a simple evolution simulation."""
     print("\n🚀 Starting simple evolution simulation...")
     
     # Start evolution
-    success, output, error = run_command(
-        "./build/bin/evosim --config example_config.conf --non-interactive start"
-    )
+    success, output, error = run_command("./build/bin/evosim --config example_config.yaml start")
     
     if not success:
         print(f"❌ Failed to start evolution: {error}")
@@ -92,9 +90,7 @@ def run_simple_evolution():
     time.sleep(5)
     
     # Check status
-    success, output, error = run_command(
-        "./build/bin/evosim --config example_config.conf status"
-    )
+    success, output, error = run_command("./build/bin/evosim --config example_config.yaml status")
     
     if success:
         print("📊 Current status:")
@@ -103,9 +99,7 @@ def run_simple_evolution():
         print(f"❌ Failed to get status: {error}")
     
     # Stop evolution
-    success, output, error = run_command(
-        "./build/bin/evosim --config example_config.conf stop"
-    )
+    success, output, error = run_command("./build/bin/evosim --config example_config.yaml stop")
     
     if success:
         print("✅ Evolution stopped successfully")
@@ -130,7 +124,7 @@ def run_interactive_demo():
     
     # Start interactive mode
     success, output, error = run_command(
-        "./build/bin/evosim --config example_config.conf --interactive",
+        "./build/bin/evosim --config example_config.yaml --interactive",
         capture_output=False
     )
     
@@ -167,10 +161,11 @@ def analyze_results():
         except Exception as e:
             print(f"❌ Failed to read log: {e}")
     
-    # Export results
-    success, output, error = run_command(
-        "./build/bin/evosim --config example_config.conf export results.json"
-    )
+    # The 'export' command is not yet implemented in the server.
+    # This is a placeholder for future functionality.
+    # success, output, error = run_command(
+    #     "./build/bin/evosim --config example_config.yaml export --file results.json"
+    # )
     
     if success:
         print("✅ Results exported to results.json")
@@ -195,7 +190,7 @@ def cleanup():
     print("\n🧹 Cleaning up...")
     
     files_to_remove = [
-        "example_config.conf",
+        "example_config.yaml",
         "results.json"
     ]
     
@@ -213,29 +208,19 @@ def main():
     print("=" * 60)
     
     # Check system
-    if not check_system():
-        sys.exit(1)
-    
-    # Create configuration
-    create_config()
-    
-    # Run simple evolution
-    if not run_simple_evolution():
-        print("❌ Simple evolution failed")
+    try:
+        if not check_system():
+            sys.exit(1)
+        
+        create_config()
+        
+        if not run_simple_evolution():
+            print("❌ Simple evolution failed")
+            sys.exit(1)
+            
+        analyze_results()
+    finally:
         cleanup()
-        sys.exit(1)
-    
-    # Analyze results
-    analyze_results()
-    
-    # Ask about interactive demo
-    print("\n" + "=" * 60)
-    response = input("Would you like to try the interactive demo? (y/n): ")
-    if response.lower() in ['y', 'yes']:
-        run_interactive_demo()
-    
-    # Cleanup
-    cleanup()
     
     print("\n🎉 Example completed successfully!")
     print("For more information, see the README.md file.")

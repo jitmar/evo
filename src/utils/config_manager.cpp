@@ -1,210 +1,131 @@
 #include "utils/config_manager.h"
+#include "spdlog/spdlog.h"
+#include "yaml-cpp/yaml.h"
 #include <fstream>
-#include <sstream>
-#include <algorithm>
-#include <mutex>
 
 namespace evosim {
 
-ConfigManager::ConfigManager() {
+ConfigManager::ConfigManager(const std::string& filepath)
+    : filepath_(filepath), config_root_(std::make_unique<YAML::Node>()) {}
+
+ConfigManager::~ConfigManager() = default;
+
+bool ConfigManager::load() {
+    try {
+        // First, handle the "file not found" case. This is not a fatal error.
+        std::ifstream f(filepath_);
+        if (!f.good()) {
+            spdlog::info("Configuration file not found: '{}'. Using default settings.", filepath_);
+            return true;
+        }
+
+        // If the file exists, parse it.
+        *config_root_ = YAML::LoadFile(filepath_);
+        spdlog::info("Successfully loaded configuration from {}", filepath_);
+        return true;
+
+    } catch (const YAML::Exception& e) {
+        // Handle YAML syntax errors.
+        spdlog::error("Failed to parse YAML configuration file '{}': {}", filepath_, e.what());
+        return false;
+    }
 }
 
-// Destructor is defaulted in header
-
-bool ConfigManager::loadFromFile(const std::string& filename) {
-    (void)filename; // Suppress unused parameter warning
-    // TODO: Implement file loading
-    return true;
+// Private helper to safely extract a value from a YAML node.
+template <typename T>
+void ConfigManager::get_value(const YAML::Node& node, T& out_val) const {
+    if (node && !node.IsNull()) {
+        try {
+            out_val = node.as<T>();
+        } catch (const YAML::BadConversion& e) {
+            // Log a warning but proceed; the default value will be kept.
+            spdlog::warn("YAML type conversion error for a key: {}", e.what());
+        }
+    }
 }
 
-bool ConfigManager::saveToFile(const std::string& filename) const {
-    (void)filename; // Suppress unused parameter warning
-    // TODO: Implement file saving
-    return true;
+Environment::Config ConfigManager::getEnvironmentConfig() const {
+    Environment::Config cfg; // Start with defaults
+    if (!config_root_ || !(*config_root_)["environment"]) {
+        return cfg; // No environment section, return defaults
+    }
+
+    const auto& env_node = (*config_root_)["environment"];
+    get_value(env_node["initial_population"], cfg.initial_population);
+    get_value(env_node["max_population"], cfg.max_population);
+    get_value(env_node["min_population"], cfg.min_population);
+    get_value(env_node["mutation_rate"], cfg.mutation_rate);
+    get_value(env_node["max_mutations"], cfg.max_mutations);
+    get_value(env_node["selection_pressure"], cfg.selection_pressure);
+    get_value(env_node["resource_abundance"], cfg.resource_abundance);
+    get_value(env_node["generation_time_ms"], cfg.generation_time_ms);
+    get_value(env_node["enable_aging"], cfg.enable_aging);
+    get_value(env_node["max_age_ms"], cfg.max_age_ms);
+    get_value(env_node["enable_competition"], cfg.enable_competition);
+    get_value(env_node["competition_intensity"], cfg.competition_intensity);
+    get_value(env_node["enable_cooperation"], cfg.enable_cooperation);
+    get_value(env_node["cooperation_bonus"], cfg.cooperation_bonus);
+    get_value(env_node["enable_predation"], cfg.enable_predation);
+    get_value(env_node["enable_random_catastrophes"], cfg.enable_random_catastrophes);
+
+    return cfg;
 }
 
-bool ConfigManager::loadFromString(const std::string& content, const std::string& format) {
-    (void)content; // Suppress unused parameter warning
-    (void)format; // Suppress unused parameter warning
-    // TODO: Implement string loading
-    return true;
+EvolutionEngine::Config ConfigManager::getEvolutionEngineConfig() const {
+    EvolutionEngine::Config cfg; // Start with defaults
+    if (!config_root_ || !(*config_root_)["evolution_engine"]) {
+        return cfg; // No engine section, return defaults
+    }
+
+    const auto& engine_node = (*config_root_)["evolution_engine"];
+    get_value(engine_node["auto_start"], cfg.auto_start);
+    get_value(engine_node["save_interval_generations"], cfg.save_interval_generations);
+    get_value(engine_node["save_directory"], cfg.save_directory);
+    get_value(engine_node["enable_save_state"], cfg.enable_save_state);
+    get_value(engine_node["enable_backup"], cfg.enable_backup);
+    get_value(engine_node["backup_interval"], cfg.backup_interval);
+
+    return cfg;
 }
 
-std::string ConfigManager::saveToString(const std::string& format) const {
-    (void)format; // Suppress unused parameter warning
-    // TODO: Implement string saving
-    return "";
+BytecodeVM::Config ConfigManager::getBytecodeVMConfig() const {
+    BytecodeVM::Config cfg; // Start with defaults
+    if (!config_root_ || !(*config_root_)["bytecode_vm"]) {
+        return cfg; // No section, return defaults
+    }
+
+    const auto& vm_node = (*config_root_)["bytecode_vm"];
+    get_value(vm_node["image_width"], cfg.image_width);
+    get_value(vm_node["image_height"], cfg.image_height);
+    get_value(vm_node["memory_size"], cfg.memory_size);
+    get_value(vm_node["stack_size"], cfg.stack_size);
+    get_value(vm_node["max_instructions"], cfg.max_instructions);
+
+    return cfg;
 }
 
-bool ConfigManager::has(const std::string& section, const std::string& key) const {
-    (void)section; // Suppress unused parameter warning
-    (void)key; // Suppress unused parameter warning
-    // TODO: Implement has check
-    return false;
-}
+SymmetryAnalyzer::Config ConfigManager::getSymmetryAnalyzerConfig() const {
+    SymmetryAnalyzer::Config cfg; // Start with defaults
+    if (!config_root_ || !(*config_root_)["symmetry_analyzer"]) {
+        return cfg; // No section, return defaults
+    }
 
-bool ConfigManager::remove(const std::string& section, const std::string& key) {
-    (void)section; // Suppress unused parameter warning
-    (void)key; // Suppress unused parameter warning
-    // TODO: Implement remove
-    return true;
-}
+    const auto& analyzer_node = (*config_root_)["symmetry_analyzer"];
+    get_value(analyzer_node["enable_horizontal"], cfg.enable_horizontal);
+    get_value(analyzer_node["enable_vertical"], cfg.enable_vertical);
+    get_value(analyzer_node["enable_diagonal"], cfg.enable_diagonal);
+    get_value(analyzer_node["enable_rotational"], cfg.enable_rotational);
+    get_value(analyzer_node["enable_complexity"], cfg.enable_complexity);
+    get_value(analyzer_node["horizontal_weight"], cfg.horizontal_weight);
+    get_value(analyzer_node["vertical_weight"], cfg.vertical_weight);
+    get_value(analyzer_node["diagonal_weight"], cfg.diagonal_weight);
+    get_value(analyzer_node["rotational_weight"], cfg.rotational_weight);
+    get_value(analyzer_node["complexity_weight"], cfg.complexity_weight);
+    get_value(analyzer_node["histogram_bins"], cfg.histogram_bins);
+    get_value(analyzer_node["noise_threshold"], cfg.noise_threshold);
+    get_value(analyzer_node["normalize_scores"], cfg.normalize_scores);
 
-ConfigManager::ConfigSection ConfigManager::getSection(const std::string& section) const {
-    (void)section; // Suppress unused parameter warning
-    // TODO: Implement get section
-    return ConfigSection{};
-}
-
-void ConfigManager::setSection(const std::string& section, const ConfigSection& config_section) {
-    (void)section; // Suppress unused parameter warning
-    (void)config_section; // Suppress unused parameter warning
-    // TODO: Implement set section
-}
-
-bool ConfigManager::removeSection(const std::string& section) {
-    (void)section; // Suppress unused parameter warning
-    // TODO: Implement remove section
-    return true;
-}
-
-void ConfigManager::merge(const ConfigManager& other, bool overwrite) {
-    (void)other; // Suppress unused parameter warning
-    (void)overwrite; // Suppress unused parameter warning
-    // TODO: Implement merge
-}
-
-std::vector<std::string> ConfigManager::validate(const ConfigSchema& schema) const {
-    (void)schema; // Suppress unused parameter warning
-    // TODO: Implement validation
-    return {};
-}
-
-void ConfigManager::applyDefaults(const ConfigSchema& schema) {
-    (void)schema; // Suppress unused parameter warning
-    // TODO: Implement apply defaults
-}
-
-std::string ConfigManager::getString(const std::string& section, const std::string& key, 
-                                     const std::string& default_value) const {
-    (void)section; // Suppress unused parameter warning
-    (void)key; // Suppress unused parameter warning
-    // TODO: Implement get string
-    return default_value;
-}
-
-int ConfigManager::getInt(const std::string& section, const std::string& key, int default_value) const {
-    (void)section; // Suppress unused parameter warning
-    (void)key; // Suppress unused parameter warning
-    // TODO: Implement get int
-    return default_value;
-}
-
-double ConfigManager::getDouble(const std::string& section, const std::string& key, double default_value) const {
-    (void)section; // Suppress unused parameter warning
-    (void)key; // Suppress unused parameter warning
-    // TODO: Implement get double
-    return default_value;
-}
-
-bool ConfigManager::getBool(const std::string& section, const std::string& key, bool default_value) const {
-    (void)section; // Suppress unused parameter warning
-    (void)key; // Suppress unused parameter warning
-    // TODO: Implement get bool
-    return default_value;
-}
-
-// set() is a template method in the header, no implementation needed here
-
-bool ConfigManager::hasSection(const std::string& section) const {
-    (void)section; // Suppress unused parameter warning
-    // TODO: Implement has section
-    return false;
-}
-
-ConfigValue ConfigManager::getValue(const std::string& section, const std::string& key) const {
-    (void)section; // Suppress unused parameter warning
-    (void)key; // Suppress unused parameter warning
-    // TODO: Implement get value
-    return ConfigValue{};
-}
-
-void ConfigManager::setValue(const std::string& section, const std::string& key, const ConfigValue& value) {
-    (void)section; // Suppress unused parameter warning
-    (void)key; // Suppress unused parameter warning
-    (void)value; // Suppress unused parameter warning
-    // TODO: Implement set value
-}
-
-std::string ConfigManager::valueToString(const ConfigValue& value) {
-    (void)value; // Suppress unused parameter warning
-    // TODO: Implement value to string
-    return "";
-}
-
-ConfigValue ConfigManager::stringToValue(const std::string& str, const std::string& type) {
-    (void)str; // Suppress unused parameter warning
-    (void)type; // Suppress unused parameter warning
-    // TODO: Implement string to value
-    return ConfigValue{};
-}
-
-bool ConfigManager::parseINI(const std::string& content) {
-    (void)content; // Suppress unused parameter warning
-    // TODO: Implement INI parsing
-    return true;
-}
-
-bool ConfigManager::parseJSON(const std::string& content) {
-    (void)content; // Suppress unused parameter warning
-    // TODO: Implement JSON parsing
-    return true;
-}
-
-bool ConfigManager::parseYAML(const std::string& content) {
-    (void)content; // Suppress unused parameter warning
-    // TODO: Implement YAML parsing
-    return true;
-}
-
-std::string ConfigManager::generateINI() const {
-    // TODO: Implement INI generation
-    return "";
-}
-
-std::string ConfigManager::generateJSON() const {
-    // TODO: Implement JSON generation
-    return "";
-}
-
-std::string ConfigManager::generateYAML() const {
-    // TODO: Implement YAML generation
-    return "";
-}
-
-std::string ConfigManager::trim(const std::string& str) {
-    (void)str; // Suppress unused parameter warning
-    // TODO: Implement trim
-    return str;
-}
-
-std::vector<std::string> ConfigManager::split(const std::string& str, char delimiter) {
-    (void)str; // Suppress unused parameter warning
-    (void)delimiter; // Suppress unused parameter warning
-    // TODO: Implement split
-    return {};
-}
-
-std::string ConfigManager::escape(const std::string& str) {
-    (void)str; // Suppress unused parameter warning
-    // TODO: Implement escape
-    return str;
-}
-
-std::string ConfigManager::unescape(const std::string& str) {
-    (void)str; // Suppress unused parameter warning
-    // TODO: Implement unescape
-    return str;
+    return cfg;
 }
 
 } // namespace evosim 

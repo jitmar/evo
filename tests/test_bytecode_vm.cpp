@@ -74,4 +74,40 @@ TEST_F(BytecodeVMTest, Disassemble) {
     EXPECT_NE(disassembly.find("HALT"), std::string::npos);
 }
 
+TEST_F(BytecodeVMTest, OpcodeAdd) {
+    // PUSH 10, PUSH 20, ADD, HALT
+    BytecodeVM::Bytecode bytecode = {0x01, 10, 0x01, 20, 0x03, 0xFF};
+    vm_->execute(bytecode);
+    const auto& state = vm_->getLastState();
+    ASSERT_EQ(state.stack.size(), 1);
+    uint8_t result = state.stack.back();
+    EXPECT_EQ(result, 30);
+}
+
+TEST_F(BytecodeVMTest, OpcodeSub) {
+    // PUSH 20, PUSH 10, SUB, HALT
+    BytecodeVM::Bytecode bytecode = {0x01, 20, 0x01, 10, 0x04, 0xFF};
+    vm_->execute(bytecode);
+    const auto& state = vm_->getLastState();
+    ASSERT_EQ(state.stack.size(), 1);
+    uint8_t result = state.stack.back();
+    EXPECT_EQ(result, 10);
+}
+
+TEST_F(BytecodeVMTest, OpcodeDivByZero) {
+    // PUSH 10, PUSH 0, DIV, HALT
+    BytecodeVM::Bytecode bytecode = {0x01, 10, 0x01, 0, 0x06, 0xFF};
+    vm_->execute(bytecode);
+    auto stats = vm_->getLastStats();
+    EXPECT_FALSE(stats.halted_normally);
+    EXPECT_EQ(stats.error_message, "Division by zero");
+}
+
+TEST_F(BytecodeVMTest, OpcodeJmp) {
+    // JMP to address 4, which contains HALT. The PUSH at address 2 should be skipped.
+    BytecodeVM::Bytecode bytecode = {0x0C, 4, 0x01, 1, 0xFF};
+    vm_->execute(bytecode);
+    EXPECT_TRUE(vm_->getLastState().stack.empty());
+}
+
 } // namespace evosim 

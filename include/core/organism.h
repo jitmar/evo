@@ -7,6 +7,7 @@
 #include <chrono>
 #include <atomic>
 #include <mutex>
+#include "nlohmann/json_fwd.hpp"
 
 namespace evosim {
 
@@ -35,12 +36,11 @@ public:
         TimePoint last_replication;     ///< Last replication time
         uint32_t replication_count;     ///< Number of successful replications
         uint32_t mutation_count;        ///< Total mutations accumulated
-        uint32_t some_other_field;
 
         Stats(uint64_t id_)
             : id(id_), generation(0), parent_id(0), fitness_score(0.0),
               birth_time(Clock::now()), last_replication(birth_time),
-              replication_count(0), mutation_count(0), some_other_field(0) {}
+              replication_count(0), mutation_count(0) {}
         Stats() = default;
         Stats(const Stats&) = default;
         Stats(Stats&&) noexcept = default;
@@ -106,7 +106,7 @@ public:
      * @brief Serialize organism to string
      * @return Serialized organism data
      */
-    std::string serialize() const;
+    nlohmann::json serialize() const;
 
     /**
      * @brief Deserialize organism from string

@@ -1,15 +1,12 @@
 #pragma once
 
+#include <boost/asio.hpp>
 #include <memory>
 #include <string>
 #include <thread>
 #include <atomic>
-
-// Forward declaration for EvolutionEngine to reduce header dependencies.
-// The full definition will be included in the .cpp file.
-namespace evosim {
-class EvolutionEngine;
-}
+#include "core/environment.h"
+#include "core/evolution_engine.h"
 
 namespace evosim {
 
@@ -39,7 +36,13 @@ public:
      * @brief Constructor
      * @param config The controller's configuration.
      */
-    explicit EvolutionController(const Config& config);
+    explicit EvolutionController(
+        const Config& controller_config,
+        const Environment::Config& env_config,
+        const EvolutionEngine::Config& engine_config,
+        const BytecodeVM::Config& vm_config,
+        const SymmetryAnalyzer::Config& analyzer_config
+    );
 
     /**
      * @brief Destructor that ensures clean shutdown.
@@ -70,11 +73,6 @@ public:
 
 private:
     /**
-     * @brief The main loop for the evolution engine, run in a separate thread.
-     */
-    void runEvolutionLoop();
-
-    /**
      * @brief Signals the server and the evolution loop to stop.
      */
     void stopServer();
@@ -84,15 +82,15 @@ private:
      * 
      * This method reads a JSON request from the client, processes the command,
      * and sends a JSON response back.
-     * @param client_socket The socket descriptor for the connected client.
+     * @param socket The Boost.Asio socket for the connected client.
      */
-    void handleClientConnection(int client_socket);
+    void handleClientConnection(boost::asio::ip::tcp::socket socket);
 
     Config config_;
     std::unique_ptr<EvolutionEngine> engine_;
-    std::thread evolution_thread_;
     std::atomic<bool> is_running_{false};
-    int server_socket_ = -1; ///< The listening socket for the daemon.
+    boost::asio::io_context io_context_;
+    boost::asio::ip::tcp::acceptor acceptor_;
 };
 
 } // namespace evosim 

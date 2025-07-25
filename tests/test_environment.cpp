@@ -1,6 +1,7 @@
 #include "test_common.h"
 #include "core/environment.h"
 #include "core/organism.h"
+#include <filesystem>
 
 namespace evosim {
 
@@ -35,6 +36,12 @@ protected:
         Organism::Bytecode bytecode = {0x01, 0x42, 0x0B}; // PUSH 0x42, HALT
         return std::make_shared<Organism>(bytecode, 0);
     }
+
+    std::shared_ptr<Organism> createTestOrganismWithFitness(double fitness) {
+        auto org = createTestOrganism();
+        org->setFitnessScore(fitness);
+        return org;
+    }
 };
 
 TEST_F(EnvironmentTest, Constructor) {
@@ -42,6 +49,29 @@ TEST_F(EnvironmentTest, Constructor) {
     EXPECT_EQ(environment_->getPopulation().size(), 0);
     auto stats = environment_->getStats();
     EXPECT_EQ(stats.population_size, 0);
+}
+
+TEST_F(EnvironmentTest, ConstructorWithCustomSubConfigs) {
+    // 1. Define custom configurations for sub-components.
+    BytecodeVM::Config vm_config;
+    vm_config.image_width = 64;
+    vm_config.max_instructions = 5000;
+
+    SymmetryAnalyzer::Config analyzer_config;
+    analyzer_config.horizontal_weight = 0.99;
+    analyzer_config.enable_vertical = false;
+
+    // 2. Create the Environment with these specific configs.
+    Environment custom_env({}, vm_config, analyzer_config);
+
+    // 3. Verify that the internal components have the correct configuration.
+    const auto internal_vm_config = custom_env.getVMConfig();
+    EXPECT_EQ(internal_vm_config.image_width, 64);
+    EXPECT_EQ(internal_vm_config.max_instructions, 5000);
+
+    const auto internal_analyzer_config = custom_env.getAnalyzerConfig();
+    EXPECT_DOUBLE_EQ(internal_analyzer_config.horizontal_weight, 0.99);
+    EXPECT_FALSE(internal_analyzer_config.enable_vertical);
 }
 
 TEST_F(EnvironmentTest, AddOrganism) {
@@ -130,6 +160,8 @@ TEST_F(EnvironmentTest, SetConfig) {
     new_config.competition_intensity = 0.3;
     new_config.enable_cooperation = true;
     new_config.cooperation_bonus = 0.2;
+    new_config.enable_predation = false;
+    new_config.enable_random_catastrophes = false;
 
     environment_->setConfig(new_config);
 
@@ -137,19 +169,42 @@ TEST_F(EnvironmentTest, SetConfig) {
     EXPECT_EQ(config.max_population, 30u);
     EXPECT_EQ(config.mutation_rate, 0.02);
     EXPECT_EQ(config.enable_cooperation, true);
+    EXPECT_EQ(config.enable_predation, false);
+    EXPECT_EQ(config.enable_random_catastrophes, false);
 }
 
-TEST_F(EnvironmentTest, ApplyEnvironmentalPressures) {
-    // Setup: Add several organisms
-    for (int i = 0; i < 20; ++i) {
-        environment_->addOrganism(createTestOrganism());
+TEST_F(EnvironmentTest, ApplyEnvironmentalPressuresSelectsCorrectly) {
+    // This test verifies that selection pressure correctly removes low-fitness organisms.
+
+    // 1. Configure the environment for high selection pressure and disable other pressures.
+    Environment::Config config = environment_->getConfig();
+    config.selection_pressure = 0.5; // Target removing 50% of the population.
+    config.enable_aging = false;
+    config.enable_competition = false;
+    config.enable_predation = false;
+    config.enable_random_catastrophes = false;
+    config.resource_abundance = 10.0; // Effectively infinite resources.
+    environment_->setConfig(config);
+
+    // 2. Create a predictable population: 5 high-fitness, 5 low-fitness.
+    for (int i = 0; i < 5; ++i) {
+        environment_->addOrganism(createTestOrganismWithFitness(0.9)); // High fitness
     }
-    size_t before = environment_->getPopulation().size();
+    for (int i = 0; i < 5; ++i) {
+        environment_->addOrganism(createTestOrganismWithFitness(0.1)); // Low fitness
+    }
+    ASSERT_EQ(environment_->getPopulation().size(), 10);
+
+    // 3. Apply the pressures. This should trigger apply_selection_pressure_().
     environment_->applyEnvironmentalPressures();
-    size_t after = environment_->getPopulation().size();
-    // The population should not increase after applying pressures
-    EXPECT_LE(after, before);
-    // The function should not crash or throw
+
+    // 4. Verify the outcome: The 5 low-fitness organisms should have been removed.
+    auto final_population = environment_->getPopulation();
+    EXPECT_EQ(final_population.size(), 5);
+    for (const auto& pair : final_population) {
+        ASSERT_NE(pair.second, nullptr);
+        EXPECT_NEAR(pair.second->getFitnessScore(), 0.9, 1e-6);
+    }
 }
 
 TEST_F(EnvironmentTest, EvaluateFitness) {
@@ -160,6 +215,46 @@ TEST_F(EnvironmentTest, EvaluateFitness) {
     EXPECT_LE(fitness, 1.0);
 }
 
+TEST_F(EnvironmentTest, SaveAndLoadState) {
+    const std::string save_file = "test_env_state.json";
+
+    // Use a "calm" configuration for this test to make population size predictable.
+    // Disable selection pressures that would cull the population.
+    Environment::Config calm_config = environment_->getConfig();
+    calm_config.selection_pressure = 0.0;
+    calm_config.enable_competition = false;
+    calm_config.enable_aging = false;
+    calm_config.enable_predation = false;
+    environment_->setConfig(calm_config);
+
+    // 1. Add some organisms to create a state
+    for (int i = 0; i < 10; ++i) {
+        environment_->addOrganism(createTestOrganism());
+    }
+    environment_->update(); // Run one generation
+
+    auto stats_before_save = environment_->getStats();
+    // With predation disabled, 10 organisms become 11 after reproduction.
+    EXPECT_EQ(stats_before_save.population_size, 11);
+    EXPECT_EQ(stats_before_save.generation, 1);
+
+    // 2. Save the state
+    EXPECT_TRUE(environment_->saveState(save_file));
+    ASSERT_TRUE(std::filesystem::exists(save_file));
+
+    // 3. Create a new environment and load the state
+    Environment new_environment({});
+    EXPECT_TRUE(new_environment.loadState(save_file));
+
+    // 4. Verify the loaded state
+    auto stats_after_load = new_environment.getStats();
+    EXPECT_EQ(stats_after_load.population_size, stats_before_save.population_size);
+    EXPECT_EQ(stats_after_load.generation, stats_before_save.generation);
+
+    // 5. Cleanup
+    std::filesystem::remove(save_file);
+}
+
 TEST_F(EnvironmentTest, SelectForReproduction) {
     auto organism1 = createTestOrganism();
     auto organism2 = createTestOrganism();
@@ -168,6 +263,28 @@ TEST_F(EnvironmentTest, SelectForReproduction) {
     auto selected = environment_->selectForReproduction(1);
     EXPECT_EQ(selected.size(), 1u);
     EXPECT_TRUE(selected[0] != nullptr);
+}
+
+TEST_F(EnvironmentTest, GetTopFittest) {
+    // 1. Create organisms with varying fitness scores.
+    auto org1 = createTestOrganismWithFitness(0.5);
+    auto org2 = createTestOrganismWithFitness(0.9); // Fittest
+    auto org3 = createTestOrganismWithFitness(0.2); // Least fit
+    auto org4 = createTestOrganismWithFitness(0.7);
+
+    environment_->addOrganism(org1);
+    environment_->addOrganism(org2);
+    environment_->addOrganism(org3);
+    environment_->addOrganism(org4);
+
+    // 2. Get the top 3 fittest organisms.
+    auto top_organisms = environment_->getTopFittest(3);
+
+    // 3. Verify the results.
+    ASSERT_EQ(top_organisms.size(), 3);
+    EXPECT_EQ(top_organisms[0]->getStats().id, org2->getStats().id); // 0.9
+    EXPECT_EQ(top_organisms[1]->getStats().id, org4->getStats().id); // 0.7
+    EXPECT_EQ(top_organisms[2]->getStats().id, org1->getStats().id); // 0.5
 }
 
 } // namespace evosim 

@@ -94,39 +94,36 @@ docker-compose --profile cli run evosim-cli --help
 ### Basic Usage
 
 ```bash
-# Start interactive mode
-./evosim --interactive
+# 1. Start the server daemon in a terminal
+./build/bin/evosimd --config my_config.yaml
 
-# Run with custom configuration
-./evosim --config my_config.conf start
+# 2. In another terminal, send commands with the client
 
-# Execute single command
-./evosim --population-size 500 --mutation-rate 0.02 start
+# Get the current status
+./build/bin/evosim status
 
-# Load existing state
-./evosim --load-state save_001.evo status
+# Load a state from a file
+./build/bin/evosim load --file save_001.json
 
-# Export results
-./evosim --export-data results.csv
 ```
 
 ## Configuration
 
-The system uses INI-style configuration files with sections for different components:
+The system uses a YAML configuration file (`evosim.yaml`) with sections for different components:
 
-```ini
-[environment]
-initial_population = 100
-max_population = 1000
-mutation_rate = 0.01
+```yaml
+environment:
+  initial_population: 100
+  max_population: 1000
+  mutation_rate: 0.01
 
-[bytecode_vm]
-image_width = 256
-image_height = 256
+bytecode_vm:
+  image_width: 256
+  image_height: 256
 
-[symmetry_analyzer]
-horizontal_weight = 0.25
-vertical_weight = 0.25
+symmetry_analyzer:
+  horizontal_weight: 0.25
+  vertical_weight: 0.25
 ```
 
 ## CLI Commands

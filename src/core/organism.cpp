@@ -3,6 +3,8 @@
 #include <sstream>
 #include <iomanip>
 #include <iostream>
+#include "spdlog/spdlog.h"
+#include "nlohmann/json.hpp"
 
 // TODO: For high-performance scenarios, consider using dedicated mutexes for independent properties
 // instead of a single mutex_ for the entire Organism. This would allow greater concurrency at the
@@ -109,73 +111,33 @@ Organism::Stats Organism::getStats() const {
     return stats_;
 }
 
-std::string Organism::serialize() const {
+nlohmann::json Organism::serialize() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    
-    std::ostringstream oss;
-    oss << "ORGANISM_V1\n";
-    oss << "ID:" << stats_.id << "\n";
-    oss << "GENERATION:" << stats_.generation << "\n";
-    oss << "PARENT:" << stats_.parent_id << "\n";
-    oss << "FITNESS:" << std::fixed << std::setprecision(6) << stats_.fitness_score << "\n";
-    oss << "ALIVE:" << (true ? "1" : "0") << "\n"; // Always serialize as alive
-    oss << "BYTECODE_SIZE:" << bytecode_.size() << "\n";
-    oss << "BYTECODE:";
-    
-    for (uint8_t byte : bytecode_) {
-        oss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte);
-    }
-    oss << "\n";
-    
-    return oss.str();
+
+    nlohmann::json organism_json;
+    organism_json["id"] = stats_.id;
+    organism_json["generation"] = stats_.generation;
+    organism_json["parent_id"] = stats_.parent_id;
+    organism_json["fitness_score"] = stats_.fitness_score;
+    organism_json["bytecode"] = bytecode_;
+
+    return organism_json;
 }
 
 bool Organism::deserialize(const std::string& data) {
     std::lock_guard<std::mutex> lock(mutex_);
-    
-    std::istringstream iss(data);
-    std::string line;
-    
-    // Check version
-    std::getline(iss, line);
-    if (line != "ORGANISM_V1") {
+    try {
+        nlohmann::json organism_json = nlohmann::json::parse(data);
+        stats_.id = organism_json["id"];
+        stats_.generation = organism_json["generation"];
+        stats_.parent_id = organism_json["parent_id"];
+        stats_.fitness_score = organism_json["fitness_score"];
+        bytecode_ = organism_json["bytecode"].get<std::vector<uint8_t>>();
+        return true;
+    } catch (const std::exception& e) {
+        spdlog::error("Failed to deserialize organism: {}", e.what());
         return false;
     }
-    
-    // Parse fields
-    while (std::getline(iss, line)) {
-        if (line.empty()) continue;
-        
-        size_t colon_pos = line.find(':');
-        if (colon_pos == std::string::npos) continue;
-        
-        std::string key = line.substr(0, colon_pos);
-        std::string value = line.substr(colon_pos + 1);
-        
-        if (key == "ID") {
-            stats_.id = std::stoull(value);
-        } else if (key == "GENERATION") {
-            stats_.generation = std::stoull(value);
-        } else if (key == "PARENT") {
-            stats_.parent_id = std::stoull(value);
-        } else if (key == "FITNESS") {
-            stats_.fitness_score = std::stod(value);
-        } else if (key == "ALIVE") {
-            // Always set alive to true on deserialize
-        } else if (key == "BYTECODE_SIZE") {
-            size_t size = std::stoul(value);
-            bytecode_.reserve(size);
-        } else if (key == "BYTECODE") {
-            bytecode_.clear();
-            for (size_t i = 0; i < value.length(); i += 2) {
-                std::string byte_str = value.substr(i, 2);
-                uint8_t byte = static_cast<uint8_t>(std::stoi(byte_str, nullptr, 16));
-                bytecode_.push_back(byte);
-            }
-        }
-    }
-    
-    return true;
 }
 
 uint32_t Organism::applyMutations(Bytecode& bytecode, double mutation_rate, uint32_t max_mutations) const {
@@ -205,4 +167,4 @@ uint8_t Organism::generateRandomByte() const {
     return dist(rng);
 }
 
-} // namespace evosim 
+}  // namespace evosim

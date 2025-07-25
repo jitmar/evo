@@ -1,7 +1,7 @@
 # For maintainability, automatically gather all .cpp files in this directory
 # and its subdirectories. The CONFIGURE_DEPENDS flag ensures that CMake will
 # re-run if a new file is added or removed, which is a modern best practice.
-file(GLOB_RECURSE LIB_SOURCES CONFIGURE_DEPENDS "core/*.cpp" "cli/*.cpp" "utils/*.cpp")
+file(GLOB_RECURSE LIB_SOURCES CONFIGURE_DEPENDS "core/*.cpp" "utils/*.cpp")
 
 # Define the library target with the automatically gathered source files.
 add_library(evosim_lib STATIC ${LIB_SOURCES})
@@ -10,7 +10,6 @@ add_library(evosim_lib STATIC ${LIB_SOURCES})
 # IDE integration (e.g., for tools like CLion or VS Code).
 file(GLOB_RECURSE LIB_HEADERS CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/include/core/*.h"
-    "${CMAKE_SOURCE_DIR}/include/cli/*.h"
     "${CMAKE_SOURCE_DIR}/include/utils/*.h"
 )
 
@@ -37,9 +36,14 @@ if(TARGET OpenCV::opencv_core)
         OpenCV::opencv_core
         OpenCV::opencv_highgui
         OpenCV::opencv_imgproc
+        nlohmann_json::nlohmann_json
         PRIVATE
         Threads::Threads
-        nlohmann_json::nlohmann_json
+        spdlog::spdlog
+        # For header-only Boost libraries like Asio, we link against the
+        # generic Boost::boost target, which provides the include directories.
+        Boost::boost
+        yaml-cpp
     )
 else()
     message(STATUS "Linking against non-namespaced opencv_* targets.")
@@ -48,9 +52,14 @@ else()
         opencv_core
         opencv_highgui
         opencv_imgproc
+        nlohmann_json::nlohmann_json
         PRIVATE
         Threads::Threads
-        nlohmann_json::nlohmann_json
+        spdlog::spdlog
+        # For header-only Boost libraries like Asio, we link against the
+        # generic Boost::boost target, which provides the include directories.
+        Boost::boost
+        yaml-cpp
     )
 endif()
 # Set compile definitions for the library
@@ -76,14 +85,31 @@ target_compile_options(evosim_lib PRIVATE
     "$<$<CONFIG:Release>:-Werror>"
 )
 
-# Define the main executable.
+# --- Client Executable ---
+# Define the client executable.
 add_executable(evosim main.cpp)
 
-# Link the executable against our library. It will automatically inherit
-# the include paths and link dependencies from evosim_lib.
+# Link the client against its required libraries. It does not need the full evosim_lib.
 target_link_libraries(evosim PRIVATE
+    Boost::program_options
+    Boost::boost # For Asio networking
+    nlohmann_json::nlohmann_json
+)
+
+# --- Server Daemon Executable ---
+# Gather the daemon-specific source files.
+file(GLOB DAEMON_SOURCES CONFIGURE_DEPENDS "cli/*.cpp")
+file(GLOB DAEMON_HEADERS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/include/cli/*.h")
+
+# Define the server daemon executable.
+add_executable(evosimd main_daemon.cpp ${DAEMON_SOURCES})
+
+# Associate headers for IDE support.
+target_sources(evosimd PRIVATE ${DAEMON_HEADERS})
+
+# Link the daemon against our core library and its other dependencies.
+target_link_libraries(evosimd PRIVATE
     evosim_lib
     Boost::program_options
-    Boost::filesystem
-    Boost::system
+    spdlog::spdlog
 )

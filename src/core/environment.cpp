@@ -7,15 +7,22 @@
 #include <unordered_set> // Added for apply_predation_
 #include <iostream>
 #include <cmath>
+#include "nlohmann/json.hpp"
+#include "spdlog/spdlog.h"
 
 namespace evosim {
 
-Environment::Environment(const Config& config)
+Environment::Environment(
+    const Config& config,
+    const BytecodeVM::Config& vm_config,
+    const SymmetryAnalyzer::Config& analyzer_config
+)
     : config_(config)
-    , vm_(BytecodeVM::Config{})
-    , analyzer_(SymmetryAnalyzer::Config{})
+    , vm_(vm_config)
+    , analyzer_(analyzer_config)
     , rng_(std::random_device{}()) {
-    initialize();
+    // Pass the configured initial bytecode size from the environment's config.
+    initialize(config_.initial_bytecode_size);
 }
 
 void Environment::initialize(uint32_t bytecode_size) {
@@ -36,29 +43,46 @@ void Environment::initialize(uint32_t bytecode_size) {
 }
 
 bool Environment::update() {
-    std::lock_guard<std::mutex> lock(mutex_);
     try {
-        // Evaluate fitness for all organisms
-        for (auto& pair : population_) {
-            if (pair.second) {
-                double fitness = evaluateFitness(pair.second);
-                pair.second->setFitnessScore(fitness);
+        // Step 1: Get a snapshot of the current population without holding the lock for too long.
+        std::vector<OrganismPtr> current_population;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (population_.empty()) {
+                return true; // Nothing to do.
+            }
+            current_population.reserve(population_.size());
+            for (const auto& pair : population_) {
+                if (pair.second) {
+                    current_population.push_back(pair.second);
+                }
             }
         }
-        // Call unlocked helper directly
-        apply_environmental_pressures_unlocked_();
-        // Perform natural selection
-        uint32_t deaths = performSelection();
-        stats_.deaths_this_gen = deaths;
-        // Perform reproduction
-        uint32_t births = performReproduction();
-        stats_.births_this_gen = births;
-        // Update statistics
-        stats_.generation++;
-        stats_.last_update = Clock::now();
-        updateStats();
+
+        // Step 2: Perform the expensive fitness evaluation WITHOUT holding the main environment lock.
+        // The Organism's setFitnessScore method is individually thread-safe.
+        for (const auto& organism : current_population) {
+            double fitness = evaluateFitness(organism);
+            organism->setFitnessScore(fitness);
+        }
+
+        // Step 3: Re-acquire the lock to perform state-modifying operations.
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            apply_environmental_pressures_unlocked_();
+            uint32_t deaths = performSelection();
+            stats_.deaths_this_gen = deaths;
+            uint32_t births = performReproduction();
+            stats_.births_this_gen = births;
+            stats_.generation++;
+            stats_.last_update = Clock::now();
+            updateStats();
+        }
         return true;
     } catch (const std::exception& e) {
+        // It's safer to lock here as well, in case the exception was thrown from a non-locked part.
+        std::lock_guard<std::mutex> lock(mutex_);
+        spdlog::error("Exception during environment update: {}", e.what());
         return false;
     }
 }
@@ -105,15 +129,51 @@ Environment::EnvironmentStats Environment::getStats() const {
     return stats_;
 }
 
+Environment::Config Environment::getConfig() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return config_;
+}
+
+BytecodeVM::Config Environment::getVMConfig() const {
+    return vm_.getConfig();
+}
+
+SymmetryAnalyzer::Config Environment::getAnalyzerConfig() const {
+    return analyzer_.getConfig();
+}
+
 double Environment::evaluateFitness(const OrganismPtr& organism) {
     if (!organism) return 0.0;
     
     // Generate image from organism's bytecode
     auto image = vm_.execute(organism->getBytecode());
     
-    // Analyze symmetry
-    auto result = analyzer_.analyze(image);
-    return result.overall_symmetry;
+    // --- Component 1: Analyzer Score ---
+    // The SymmetryAnalyzer computes a detailed, weighted fitness score based on its
+    // own configuration (horizontal, vertical, rotational symmetry, complexity, etc.).
+    // We use this as the primary component of our final fitness.
+    auto analysis_result = analyzer_.analyze(image);
+    double analyzer_score = analysis_result.fitness_score;
+
+    // --- Component 2: Color Variation Score ---
+    // This component rewards images that are not blank or monochrome, preventing
+    // evolution from getting stuck on trivial solutions. We calculate the standard
+    // deviation of the pixel values across all channels.
+    cv::Scalar mean, stddev;
+    cv::meanStdDev(image, mean, stddev);
+    // Average the standard deviation across B, G, R channels and normalize.
+    // For an 8-bit image, max stddev is ~127.5. We divide by a slightly larger
+    // value and cap at 1.0 to keep it in a standard [0, 1] range.
+    double variation_score = std::min(1.0, (stddev[0] + stddev[1] + stddev[2]) / 3.0 / 128.0);
+
+    // --- Final Weighted Combination ---
+    // The final fitness is a weighted sum of the high-level component scores.
+    // This allows us to balance the drive for symmetry/complexity against the
+    // need for basic color variation.
+    double final_fitness = (config_.fitness_weight_symmetry * analyzer_score) +
+                           (config_.fitness_weight_variation * variation_score);
+
+    return final_fitness;
 }
 
 std::vector<std::shared_ptr<Organism>> Environment::selectForReproduction(uint32_t count) const {
@@ -217,8 +277,12 @@ void Environment::apply_environmental_pressures_unlocked_() {
         return;
     }
     apply_resource_scarcity_();
-    apply_random_catastrophe_();
-    apply_predation_();
+    if (config_.enable_random_catastrophes) {
+        apply_random_catastrophe_();
+    }
+    if (config_.enable_predation) {
+        apply_predation_();
+    }
     apply_selection_pressure_();
 }
 
@@ -307,52 +371,79 @@ void Environment::apply_selection_pressure_() {
 
 bool Environment::saveState(const std::string& filename) const {
     std::lock_guard<std::mutex> lock(mutex_);
-    
+
     try {
-        std::ofstream file(filename);
-        if (!file.is_open()) return false;
-        
-        file << "ENVIRONMENT_STATE_V1\n";
-        file << "GENERATION:" << stats_.generation << "\n";
-        file << "POPULATION_SIZE:" << population_.size() << "\n";
-        
+        nlohmann::json state_json;
+        state_json["version"] = "ENVIRONMENT_STATE_V2";
+        state_json["generation"] = stats_.generation;
+
+        nlohmann::json organisms_json = nlohmann::json::array();
         for (const auto& pair : population_) {
             if (pair.second) {
-                file << pair.second->serialize() << "\n";
+                // serialize() now returns a json object directly
+                organisms_json.push_back(pair.second->serialize());
             }
         }
-        
+        state_json["organisms"] = organisms_json;
+        state_json["population_size"] = organisms_json.size();
+
+        std::ofstream file(filename);
+        if (!file.is_open()) {
+            spdlog::error("Failed to open file for saving state: {}", filename);
+            return false;
+        }
+
+        file << state_json.dump(4);
+
         return true;
     } catch (const std::exception& e) {
+        spdlog::error("Exception while saving environment state to {}: {}", filename, e.what());
         return false;
     }
 }
 
 bool Environment::loadState(const std::string& filename) {
     std::lock_guard<std::mutex> lock(mutex_);
-    
+
     try {
         std::ifstream file(filename);
-        if (!file.is_open()) return false;
-        
-        std::string line;
-        std::getline(file, line);
-        if (line != "ENVIRONMENT_STATE_V1") return false;
-        
+        if (!file.is_open()) {
+            spdlog::error("Failed to open file for loading state: {}", filename);
+            return false;
+        }
+
+        nlohmann::json state_json;
+        file >> state_json;
+
+        if (!state_json.contains("version") || state_json["version"] != "ENVIRONMENT_STATE_V2") {
+            spdlog::error("Invalid or missing environment state version in {}.", filename);
+            return false;
+        }
+
         population_.clear();
-        
-        while (std::getline(file, line)) {
-            if (line.empty()) continue;
-            
-            auto organism = std::make_shared<Organism>(Organism::Bytecode{}, 0);
-            if (organism->deserialize(line)) {
-                population_[organism->getStats().id] = organism;
+        stats_ = {}; // Reset stats before loading
+
+        stats_.generation = state_json.value("generation", 0ULL);
+
+        if (state_json.contains("organisms")) {
+            for (const auto& organism_json : state_json["organisms"]) {
+                auto organism = std::make_shared<Organism>(Organism::Bytecode{}, 0);
+                // deserialize expects a string, so we dump the JSON object for one organism
+                if (organism->deserialize(organism_json.dump())) {
+                    population_[organism->getStats().id] = organism;
+                } else {
+                    spdlog::warn("Failed to deserialize an organism from state file.");
+                }
             }
         }
-        
+
         updateStats();
         return true;
+    } catch (const nlohmann::json::parse_error& e) {
+        spdlog::error("JSON parse error while loading state from {}: {}", filename, e.what());
+        return false;
     } catch (const std::exception& e) {
+        spdlog::error("Exception while loading environment state from {}: {}", filename, e.what());
         return false;
     }
 }
@@ -391,6 +482,11 @@ std::vector<Organism::Stats> Environment::getOrganismStats() const {
     }
     
     return stats;
+}
+
+std::vector<Environment::OrganismPtr> Environment::getTopFittest(uint32_t count) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return select_for_reproduction_unlocked_(count);
 }
 
 Organism::Bytecode Environment::generateRandomBytecode(uint32_t size) const {

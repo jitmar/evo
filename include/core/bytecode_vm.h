@@ -119,7 +119,13 @@ public:
      * @brief Get last execution statistics.
      * @return A const reference to the last execution statistics.
      */
-    const ExecutionStats& getLastStats() const { return last_stats_; }
+    ExecutionStats getLastStats() const;
+
+    /**
+     * @brief Get the last known state of the VM for inspection.
+     * @return A const reference to the last VM state.
+     */
+    VMState getLastState() const;
 
     /**
      * @brief Reset VM state
@@ -136,7 +142,7 @@ public:
      * @brief Get VM configuration
      * @return Current configuration
      */
-    const Config& getConfig() const { return config_; }
+    Config getConfig() const;
 
     /**
      * @brief Validate bytecode

@@ -1,4 +1,5 @@
 #include "core/evolution_engine.h"
+#include "spdlog/spdlog.h"
 #include <algorithm>
 #include <random>
 #include <chrono>
@@ -49,6 +50,7 @@ bool EvolutionEngine::start() {
         emitEvent({EventType::ENGINE_STARTED, 0, Clock::now(), "Evolution engine started", 0.0, 0});
         return true;
     } catch (const std::exception& e) {
+        spdlog::error("Failed to start evolution engine: {}", e.what());
         running_ = false;
         return false;
     }
@@ -110,29 +112,40 @@ bool EvolutionEngine::resume() {
 
 // Rename runGeneration to RunGeneration and make it private
 bool EvolutionEngine::run_generation_() {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    // Removed logic_error exception: this method is now private and only called internally.
-    if (!running_ || paused_ || should_stop_) {
+    // This check is safe to do without a lock because these are atomic or only
+    // modified by the main thread when the loop is not running.
+    if (!running_ || paused_.load() || should_stop_.load()) {
         return false;
     }
-    try {
-        // Run one generation
-        if (environment_) {
-            auto organisms = environment_->getPopulation();
-            for (size_t i = 0; i < organisms.size(); ++i) {
-                (void)environment_->evaluateFitness(organisms[i]);
-            }
-            // Apply selection and reproduction
-            // This would be implemented based on the environment's capabilities
-            stats_.total_generations++;
-            stats_.last_generation_time = Clock::now();
-            emitEvent({EventType::GENERATION_COMPLETED, stats_.total_generations, Clock::now(), "Generation completed", 0.0, 0});
-            updateStats();
-            performPeriodicTasks(stats_.total_generations);
+
+    // --- Perform long-running work WITHOUT holding the lock ---
+    // The environment has its own internal mutex, so this call is thread-safe.
+    // This is the key change to prevent deadlocks with getStats().
+    if (environment_) {
+        if (!environment_->update()) {
+            std::lock_guard<std::mutex> lock(mutex_); // Lock only to emit the event
+            emitEvent({EventType::ERROR_OCCURRED, stats_.total_generations, Clock::now(), "Environment update failed for the generation.", 0.0, 0});
+            return false;
         }
+    } else {
+        return false; // No environment to update.
+    }
+
+    // --- Acquire lock only to update the engine's internal state ---
+    try {
+        std::lock_guard<std::mutex> lock(mutex_);
+        // Re-check stop condition now that we have the lock, in case a stop was requested during the update.
+        if (should_stop_.load()) {
+            return false;
+        }
+        stats_.total_generations++;
+        stats_.last_generation_time = Clock::now();
+        emitEvent({EventType::GENERATION_COMPLETED, stats_.total_generations, Clock::now(), "Generation completed", 0.0, 0});
+        updateStats();
+        performPeriodicTasks(stats_.total_generations);
         return true;
     } catch (const std::exception& e) {
+        std::lock_guard<std::mutex> lock(mutex_); // Lock to emit the event
         emitEvent({EventType::ERROR_OCCURRED, stats_.total_generations, Clock::now(), "Error in generation: " + std::string(e.what()), 0.0, 0});
         return false;
     }
@@ -155,22 +168,11 @@ EvolutionEngine::EngineStats EvolutionEngine::getStats() const {
     
     // Update current population and fitness info
     if (environment_) {
-        auto organisms = environment_->getPopulation();
-        stats.current_population = static_cast<uint32_t>(organisms.size());
-        
-        if (!organisms.empty()) {
-            double total_fitness = 0.0;
-            double best_fitness = 0.0;
-            
-            for (const auto& organism : organisms) {
-                double fitness = environment_->evaluateFitness(organism.second);
-                total_fitness += fitness;
-                best_fitness = std::max(best_fitness, fitness);
-            }
-            
-            stats.current_best_fitness = best_fitness;
-            stats.current_avg_fitness = total_fitness / static_cast<double>(organisms.size());
-        }
+        // Fetch the pre-calculated stats from the environment for efficiency.
+        auto env_stats = environment_->getStats();
+        stats.current_population = env_stats.population_size;
+        stats.current_best_fitness = env_stats.max_fitness;
+        stats.current_avg_fitness = env_stats.avg_fitness;
     }
     
     return stats;
@@ -187,54 +189,42 @@ void EvolutionEngine::unregisterEventCallback() {
 }
 
 bool EvolutionEngine::saveState(const std::string& filename) {
+    // Public-facing method. Acquire lock and call the internal implementation.
     std::lock_guard<std::mutex> lock(mutex_);
-    
-    try {
-        std::string actual_filename = filename.empty() ? generateFilename("state", "json") : filename;
-        
-        if (!ensureSaveDirectory()) {
-            return false;
-        }
-        
-        // Simple state saving - would be more comprehensive in real implementation
-        std::ofstream file(actual_filename);
-        if (!file.is_open()) {
-            return false;
-        }
-        
-        file << "{\n";
-        file << "  \"generations\": " << stats_.total_generations << ",\n";
-        file << "  \"runtime_ms\": " << stats_.total_runtime_ms << ",\n";
-        file << "  \"timestamp\": \"" << std::chrono::duration_cast<std::chrono::seconds>(Clock::now().time_since_epoch()).count() << "\"\n";
-        file << "}\n";
-        
-        emitEvent({EventType::STATE_SAVED, stats_.total_generations, Clock::now(), "State saved to " + actual_filename, 0.0, 0});
-        
-        return true;
-    } catch (const std::exception& e) {
-        return false;
-    }
+    return saveState_unlocked(filename);
 }
 
 bool EvolutionEngine::loadState(const std::string& filename) {
     std::lock_guard<std::mutex> lock(mutex_);
     
+    // Loading can only be done when the engine is stopped to prevent race conditions.
+    if (running_) {
+        spdlog::warn("Cannot load state while the engine is running. Please stop it first.");
+        return false;
+    }
+
     try {
-        std::ifstream file(filename);
-        if (!file.is_open()) {
+        // Delegate the complex task of loading the population to the environment.
+        if (!environment_->loadState(filename)) {
             return false;
         }
+
+        // Reset engine-specific runtime stats, but sync with the loaded environment state.
+        stats_ = {}; // Reset runtime, etc.
+        stats_.start_time = Clock::now(); // A new "run" starts now.
         
-        // Simple state loading - would be more comprehensive in real implementation
-        std::string line;
-        while (std::getline(file, line)) {
-            // Parse state data
-        }
+        // Get the loaded stats from the environment
+        auto env_stats = environment_->getStats();
+        stats_.total_generations = env_stats.generation;
+        stats_.current_population = env_stats.population_size;
+        stats_.current_avg_fitness = env_stats.avg_fitness;
+        stats_.current_best_fitness = env_stats.max_fitness;
         
         emitEvent({EventType::STATE_LOADED, stats_.total_generations, Clock::now(), "State loaded from " + filename, 0.0, 0});
         
         return true;
     } catch (const std::exception& e) {
+        spdlog::error("Exception while loading state: {}", e.what());
         return false;
     }
 }
@@ -286,6 +276,7 @@ bool EvolutionEngine::exportData(const std::string& filename) const {
         
         return true;
     } catch (const std::exception& e) {
+        spdlog::error("Failed to export data to {}: {}", filename, e.what());
         return false;
     }
 }
@@ -349,7 +340,7 @@ void EvolutionEngine::updateStats() {
 void EvolutionEngine::performPeriodicTasks(uint64_t generation) {
     // Save state if enabled
     if (config_.enable_save_state && generation % config_.save_interval_generations == 0) {
-        saveState();
+        saveState_unlocked(); // Call the unlocked helper to avoid deadlock
     }
     
     // Save backup if enabled
@@ -364,8 +355,32 @@ void EvolutionEngine::performPeriodicTasks(uint64_t generation) {
 }
 
 void EvolutionEngine::saveBackup(uint64_t generation) {
-    std::string filename = generateFilename("backup_" + std::to_string(generation), "json");
-    saveState(filename);
+    // This function is called from performPeriodicTasks, which already holds the lock.
+    // Therefore, it must call the unlocked version of saveState.
+    const std::string filename = generateFilename("backup_" + std::to_string(generation), "json");
+    saveState_unlocked(filename);
+}
+
+bool EvolutionEngine::saveState_unlocked(const std::string& filename) {
+    // This private helper assumes the caller already holds the mutex.
+    try {
+        const std::string actual_filename = filename.empty() ? generateFilename("state", "json") : filename;
+
+        if (!ensureSaveDirectory()) {
+            return false;
+        }
+
+        // The lock held by the caller provides consistency. No need to pause/resume.
+        // The environment's saveState is internally thread-safe.
+        if (environment_->saveState(actual_filename)) {
+            emitEvent({EventType::STATE_SAVED, stats_.total_generations, Clock::now(), "State saved to " + actual_filename, 0.0, 0});
+            return true;
+        }
+        return false;
+    } catch (const std::exception& e) {
+        spdlog::error("Exception while saving state: {}", e.what());
+        return false;
+    }
 }
 
 void EvolutionEngine::collectMetrics() {
@@ -393,6 +408,7 @@ bool EvolutionEngine::ensureSaveDirectory() const {
         std::filesystem::create_directories(config_.save_directory);
         return true;
     } catch (const std::exception& e) {
+        spdlog::error("Failed to create save directory '{}': {}", config_.save_directory, e.what());
         return false;
     }
 }

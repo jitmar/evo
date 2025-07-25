@@ -50,6 +50,7 @@ public:
     struct Config {
         uint32_t max_population;     ///< Maximum population size
         uint32_t initial_population; ///< Initial population size
+        uint32_t initial_bytecode_size; ///< The initial size of bytecode for new organisms.
         uint32_t min_population;     ///< Minimum population size
         double mutation_rate;        ///< Base mutation rate
         uint32_t max_mutations;      ///< Maximum mutations per replication
@@ -62,19 +63,36 @@ public:
         double competition_intensity; ///< Competition intensity (0-1)
         bool enable_cooperation;     ///< Enable organism cooperation
         double cooperation_bonus;    ///< Cooperation fitness bonus
-        
-        Config() : max_population(1000), initial_population(100), min_population(10),
-                   mutation_rate(0.01), max_mutations(5), selection_pressure(0.7),
-                   resource_abundance(1.0), generation_time_ms(1000), enable_aging(true),
-                   max_age_ms(30000), enable_competition(true), competition_intensity(0.5),
-                   enable_cooperation(false), cooperation_bonus(0.1) {}
+        bool enable_predation;       ///< Enable organism predation
+        bool enable_random_catastrophes; ///< Enable random catastrophe events
+
+        // --- Fitness Function Weights ---
+        // These weights determine the contribution of different high-level metrics
+        // to the final fitness score. They should ideally sum to 1.0.
+        double fitness_weight_symmetry;    ///< Weight for the combined score from SymmetryAnalyzer (symmetry, complexity, etc.).
+        double fitness_weight_variation;   ///< Weight for the color variation score (rewards non-monochrome images).
+
+        Config()
+            : max_population(1000), initial_population(100),
+              initial_bytecode_size(64), min_population(10),
+              mutation_rate(0.01), max_mutations(5), selection_pressure(0.7),
+              resource_abundance(1.0), generation_time_ms(1000),
+              enable_aging(true), max_age_ms(30000), enable_competition(true),
+              competition_intensity(0.5), enable_cooperation(false), cooperation_bonus(0.1),
+              enable_predation(true), enable_random_catastrophes(true),
+              fitness_weight_symmetry(0.8), fitness_weight_variation(0.2) {
+        }
     };
 
     /**
      * @brief Constructor
      * @param config Environment configuration
      */
-    explicit Environment(const Config& config = Config());
+    explicit Environment(
+        const Config& config = Config(),
+        const BytecodeVM::Config& vm_config = {},
+        const SymmetryAnalyzer::Config& analyzer_config = {}
+    );
 
     /**
      * @brief Destructor
@@ -130,13 +148,25 @@ public:
      * @brief Get environment configuration
      * @return Current configuration
      */
-    const Config& getConfig() const { return config_; }
+    Config getConfig() const;
 
     /**
      * @brief Set environment configuration
      * @param config New configuration
      */
     void setConfig(const Config& config) { config_ = config; }
+
+    /**
+     * @brief Get the configuration of the internal BytecodeVM.
+     * @return The BytecodeVM's configuration object.
+     */
+    BytecodeVM::Config getVMConfig() const;
+
+    /**
+     * @brief Get the configuration of the internal SymmetryAnalyzer.
+     * @return The SymmetryAnalyzer's configuration object.
+     */
+    SymmetryAnalyzer::Config getAnalyzerConfig() const;
 
     /**
      * @brief Evaluate organism fitness
@@ -199,6 +229,13 @@ public:
      * @return Vector of organism statistics
      */
     std::vector<Organism::Stats> getOrganismStats() const;
+
+    /**
+     * @brief Get the top N fittest organisms.
+     * @param count The number of organisms to retrieve.
+     * @return A vector of the top N fittest organisms, sorted by fitness.
+     */
+    std::vector<OrganismPtr> getTopFittest(uint32_t count) const;
 
 private:
     Config config_;                     ///< Environment configuration

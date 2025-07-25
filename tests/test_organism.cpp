@@ -3,6 +3,7 @@
 #include <thread>
 #include <set>
 #include <mutex> // Added for mutex
+#include "nlohmann/json.hpp"
 
 using namespace evosim;
 
@@ -73,13 +74,14 @@ TEST_F(OrganismTest, Serialization) {
     Organism organism(test_bytecode_);
     organism.setFitnessScore(0.6);
     
-    std::string serialized = organism.serialize();
-    EXPECT_FALSE(serialized.empty());
+    nlohmann::json serialized_json = organism.serialize();
+    std::string serialized_str = serialized_json.dump();
+    EXPECT_FALSE(serialized_str.empty());
     
     Organism new_organism({});
-    EXPECT_TRUE(new_organism.deserialize(serialized));
+    EXPECT_TRUE(new_organism.deserialize(serialized_str));
     EXPECT_EQ(new_organism.getBytecode(), organism.getBytecode());
-    EXPECT_EQ(new_organism.getFitnessScore(), organism.getFitnessScore());
+    EXPECT_NEAR(new_organism.getFitnessScore(), organism.getFitnessScore(), 1e-6);
 }
 
 TEST_F(OrganismTest, CopyConstructor) {

@@ -53,7 +53,6 @@ message(STATUS "--- Debugging OpenCV ---")
 message(STATUS "CMAKE_PREFIX_PATH: ${CMAKE_PREFIX_PATH}")
 message(STATUS "Searching for OpenCV...")
 find_package(OpenCV 4.12.0 REQUIRED COMPONENTS core highgui imgproc)
-
 # After find_package, print the variables it found to see what it's using.
 message(STATUS "OpenCV_FOUND: ${OpenCV_FOUND}")
 message(STATUS "OpenCV_DIR: ${OpenCV_DIR}")
@@ -61,8 +60,38 @@ message(STATUS "OpenCV_VERSION: ${OpenCV_VERSION}")
 message(STATUS "--- End Debugging ---")
 
 find_package(Threads REQUIRED)
-find_package(Boost REQUIRED COMPONENTS program_options filesystem system)
+
+# Tell CMake to use its own FindBoost.cmake module instead of the one
+# provided by the Boost installation. This is more robust and avoids issues
+# where the Boost-provided config files fail to find header-only libraries
+# like Asio.
+set(Boost_NO_BOOST_CMAKE ON)
+# We find the compiled components explicitly. Header-only libraries like Asio
+# are available automatically if the Boost headers are found.
+find_package(Boost 1.83.0 REQUIRED COMPONENTS program_options filesystem system)
 find_package(nlohmann_json 3.2.0 REQUIRED)
+
+# spdlog is a standard, high-performance logging library. We use FetchContent
+# to make it available to the project without requiring a system install.
+include(FetchContent)
+FetchContent_Declare(
+    spdlog
+    GIT_REPOSITORY https://github.com/gabime/spdlog.git
+    GIT_TAG v1.13.0
+    GIT_SHALLOW TRUE # Only fetch the history needed for the specified tag
+)
+FetchContent_MakeAvailable(spdlog)
+
+# yaml-cpp is a widely used library for parsing YAML files. We use FetchContent
+# to make it available without requiring a system install.
+include(FetchContent)
+FetchContent_Declare(
+    yaml-cpp
+    GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git
+    GIT_TAG 0.8.0
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(yaml-cpp)
 
 # Verify that the modern OpenCV targets were created.
 if(NOT TARGET opencv_core AND NOT TARGET OpenCV::opencv_core)

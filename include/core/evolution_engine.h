@@ -261,6 +261,13 @@ private:
     void saveBackup(uint64_t generation);
 
     /**
+     * @brief Save state to file
+     * @param filename Optional filename (auto-generated if empty)
+     * @return True if successful
+     */
+    bool saveState_unlocked(const std::string& filename = "");
+
+    /**
      * @brief Collect performance metrics
      */
     void collectMetrics();

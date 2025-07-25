@@ -575,4 +575,16 @@ void BytecodeVM::resetStats() {
     last_stats_.error_message.clear();
 }
 
+BytecodeVM::Config BytecodeVM::getConfig() const {
+    return config_;
+}
+
+BytecodeVM::ExecutionStats BytecodeVM::getLastStats() const {
+    return last_stats_;
+}
+
+BytecodeVM::VMState BytecodeVM::getLastState() const {
+    return state_;
+}
+
 } // namespace evosim 

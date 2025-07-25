@@ -347,9 +347,9 @@ main() {
     # Show next steps
     echo ""
     echo "Next steps:"
-    echo "  Run the simulator: ./build/bin/evosim --help"
+    echo "  1. Start the server: ./build/bin/evosimd --help"
+    echo "  2. Interact with the client: ./build/bin/evosim --help"
     echo "  Run tests: cd build && ctest --verbose"
-    echo "  Install: cd build && sudo make install"
 }
 
 # Run main function
