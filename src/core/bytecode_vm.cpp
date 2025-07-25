@@ -12,7 +12,7 @@ BytecodeVM::BytecodeVM(const Config& config)
     initializeState();
 }
 
-BytecodeVM::Image BytecodeVM::execute(const Bytecode& bytecode) {
+BytecodeVM::Image BytecodeVM::execute(const Bytecode& bytecode) const {
     reset();
     
     // Copy bytecode to memory
@@ -37,7 +37,7 @@ BytecodeVM::Image BytecodeVM::execute(const Bytecode& bytecode) {
     return canvas_.clone();
 }
 
-BytecodeVM::Image BytecodeVM::execute(const Bytecode& bytecode, const VMState& initial_state) {
+BytecodeVM::Image BytecodeVM::execute(const Bytecode& bytecode, const VMState& initial_state) const {
     state_ = initial_state;
     canvas_ = cv::Mat::zeros(static_cast<int>(config_.image_height), static_cast<int>(config_.image_width), CV_8UC3);
     resetStats();
@@ -64,7 +64,7 @@ BytecodeVM::Image BytecodeVM::execute(const Bytecode& bytecode, const VMState& i
     return canvas_.clone();
 }
 
-void BytecodeVM::reset() {
+void BytecodeVM::reset() const {
     initializeState();
     resetStats();
 }
@@ -217,7 +217,7 @@ std::string BytecodeVM::disassemble(const Bytecode& bytecode) const {
     return oss.str();
 }
 
-bool BytecodeVM::executeInstruction(Opcode opcode, uint8_t operand) {
+bool BytecodeVM::executeInstruction(Opcode opcode, uint8_t operand) const {
     switch (opcode) {
         case Opcode::NOP:
             state_.pc++;
@@ -515,7 +515,7 @@ bool BytecodeVM::executeInstruction(Opcode opcode, uint8_t operand) {
     }
 }
 
-bool BytecodeVM::pushStack(uint8_t value) {
+bool BytecodeVM::pushStack(uint8_t value) const {
     if (state_.stack.size() >= config_.stack_size) {
         return false;
     }
@@ -523,7 +523,7 @@ bool BytecodeVM::pushStack(uint8_t value) {
     return true;
 }
 
-bool BytecodeVM::popStack(uint8_t& value) {
+bool BytecodeVM::popStack(uint8_t& value) const {
     if (state_.stack.empty()) {
         return false;
     }
@@ -540,7 +540,7 @@ bool BytecodeVM::peekStack(uint8_t& value) const {
     return true;
 }
 
-void BytecodeVM::drawPixel() {
+void BytecodeVM::drawPixel() const {
     if (isInBounds(state_.x, state_.y)) {
         cv::Vec3b& pixel = canvas_.at<cv::Vec3b>(static_cast<int>(state_.y), static_cast<int>(state_.x));
         pixel[0] = state_.color; // Blue
@@ -553,7 +553,7 @@ bool BytecodeVM::isInBounds(uint32_t x, uint32_t y) const {
     return x < config_.image_width && y < config_.image_height;
 }
 
-void BytecodeVM::initializeState() {
+void BytecodeVM::initializeState() const {
     state_.stack.clear();
     state_.memory.resize(config_.memory_size, 0);
     state_.pc = 0;
@@ -566,7 +566,7 @@ void BytecodeVM::initializeState() {
     resetStats();
 }
 
-void BytecodeVM::resetStats() {
+void BytecodeVM::resetStats() const {
     last_stats_.instructions_executed = 0;
     last_stats_.pixels_drawn = 0;
     last_stats_.stack_operations = 0;
@@ -585,6 +585,49 @@ BytecodeVM::ExecutionStats BytecodeVM::getLastStats() const {
 
 BytecodeVM::VMState BytecodeVM::getLastState() const {
     return state_;
+}
+
+BytecodeVM::Bytecode BytecodeVM::generateRandomBytecode(uint32_t size) const {
+    Bytecode bytecode;
+    if (size == 0) {
+        return bytecode;
+    }
+    bytecode.reserve(size);
+
+    // Use the VM's configuration to get valid coordinate ranges.
+    const auto& vm_config = config_;
+    std::uniform_int_distribution<uint8_t> rand_val(0, 255);
+    std::uniform_int_distribution<uint8_t> rand_x(0, vm_config.image_width - 1);
+    std::uniform_int_distribution<uint8_t> rand_y(0, vm_config.image_height - 1);
+
+    // --- Seed the bytecode with a few valid drawing instructions ---
+    // This ensures the initial organisms are not completely blank and gives
+    // evolution a better starting point.
+    int num_seed_instructions = 3;
+    for (int i = 0; i < num_seed_instructions; ++i) {
+        // Each drawing sequence is 7 bytes.
+        if (bytecode.size() + 7 > size) break;
+        bytecode.push_back(static_cast<uint8_t>(Opcode::SET_X));
+        bytecode.push_back(rand_x(rng_));
+        bytecode.push_back(static_cast<uint8_t>(Opcode::SET_Y));
+        bytecode.push_back(rand_y(rng_));
+        bytecode.push_back(static_cast<uint8_t>(Opcode::SET_COLOR));
+        bytecode.push_back(rand_val(rng_));
+        bytecode.push_back(static_cast<uint8_t>(Opcode::DRAW_PIXEL));
+    }
+
+    // --- Fill the rest with semi-random data, avoiding HALT ---
+    // HALT is 0xFF, so we generate numbers up to 254.
+    std::uniform_int_distribution<uint8_t> dist_no_halt(0, 254);
+    while (bytecode.size() < size) {
+        bytecode.push_back(dist_no_halt(rng_));
+    }
+
+    // --- Ensure the program terminates by placing HALT at the very end ---
+    // This overwrites the last byte.
+    bytecode.back() = static_cast<uint8_t>(Opcode::HALT);
+
+    return bytecode;
 }
 
 } // namespace evosim 

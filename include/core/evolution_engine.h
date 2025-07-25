@@ -226,7 +226,7 @@ private:
     std::atomic<bool> paused_;          ///< Engine paused state
     std::atomic<bool> should_stop_;     ///< Stop request flag
     std::thread evolution_thread_;      ///< Evolution thread
-    std::mutex mutex_;                  ///< Thread safety mutex
+    mutable std::mutex mutex_;          ///< Thread safety mutex
     std::condition_variable cv_;        ///< Condition variable for synchronization
     EventCallback event_callback_;      ///< Event callback function
     std::vector<Event> history_;        ///< Evolution history

@@ -22,6 +22,7 @@ namespace evosim {
 class Environment {
 public:
     using OrganismPtr = Organism::OrganismPtr;
+    using ConstOrganismPtr = std::shared_ptr<const Organism>;
     using Population = std::unordered_map<uint64_t, std::shared_ptr<Organism>>;
     using Clock = std::chrono::steady_clock;
     using TimePoint = Clock::time_point;
@@ -80,7 +81,7 @@ public:
               enable_aging(true), max_age_ms(30000), enable_competition(true),
               competition_intensity(0.5), enable_cooperation(false), cooperation_bonus(0.1),
               enable_predation(true), enable_random_catastrophes(true),
-              fitness_weight_symmetry(0.8), fitness_weight_variation(0.2) {
+              fitness_weight_symmetry(0.6), fitness_weight_variation(0.4) {
         }
     };
 
@@ -130,7 +131,7 @@ public:
      * @param organism_id Organism ID
      * @return Organism pointer or nullptr if not found
      */
-    std::shared_ptr<Organism> getOrganism(uint64_t organism_id) const;
+    ConstOrganismPtr getOrganism(uint64_t organism_id) const;
 
     /**
      * @brief Get current population
@@ -180,7 +181,7 @@ public:
      * @param count Number of organisms to select
      * @return Selected organisms
      */
-    std::vector<std::shared_ptr<Organism>> selectForReproduction(uint32_t count) const;
+    std::vector<OrganismPtr> selectForReproduction(uint32_t count) const;
 
     /**
      * @brief Perform natural selection
@@ -222,7 +223,7 @@ public:
      * @brief Get best organism
      * @return Organism with highest fitness
      */
-    std::shared_ptr<Organism> getBestOrganism() const;
+    ConstOrganismPtr getBestOrganism() const;
 
     /**
      * @brief Get organism statistics
@@ -235,7 +236,7 @@ public:
      * @param count The number of organisms to retrieve.
      * @return A vector of the top N fittest organisms, sorted by fitness.
      */
-    std::vector<OrganismPtr> getTopFittest(uint32_t count) const;
+    std::vector<ConstOrganismPtr> getTopFittest(uint32_t count) const;
 
 private:
     Config config_;                     ///< Environment configuration
@@ -291,7 +292,7 @@ private:
      */
     void calculateFitnessStats();
 
-    std::vector<std::shared_ptr<Organism>> select_for_reproduction_unlocked_(uint32_t count) const;
+    std::vector<OrganismPtr> select_for_reproduction_unlocked_(uint32_t count) const;
 };
 
 } // namespace evosim 

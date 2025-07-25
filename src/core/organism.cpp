@@ -15,18 +15,30 @@ namespace evosim {
 // Initialize static member
 std::atomic<uint64_t> Organism::next_id_{1};
 
-Organism::Organism(Bytecode bytecode, uint64_t parent_id)
+Organism::Organism(const BytecodeVM& vm, uint32_t bytecode_size, uint64_t parent_id)
+    : bytecode_(vm.generateRandomBytecode(bytecode_size)),
+      stats_(next_id_++),
+      phenotype_(vm.execute(bytecode_))
+{
+    stats_.generation = (parent_id == 0) ? 0 : 1;
+    stats_.parent_id = parent_id;
+}
+
+Organism::Organism(Bytecode bytecode, const BytecodeVM& vm, uint64_t parent_id)
     : bytecode_(std::move(bytecode)),
       stats_(next_id_++)
 {
     // Only set fields not already set by Stats(uint64_t id_)
     stats_.generation = (parent_id == 0) ? 0 : 1;
     stats_.parent_id = parent_id;
+    // Generate the phenotype from the provided bytecode
+    phenotype_ = vm.execute(bytecode_);
 }
 
 Organism::Organism(const Organism& other)
     : bytecode_(other.bytecode_),
-      stats_(other.stats_)
+      stats_(other.stats_),
+      phenotype_(other.phenotype_.clone())
 {
     // Copy constructor: assign new unique id, set parent_id to original's id
     stats_.id = next_id_++;
@@ -40,7 +52,8 @@ Organism::Organism(const Organism& other)
 
 Organism::Organism(Organism&& other) noexcept
     : bytecode_(std::move(other.bytecode_)),
-      stats_(std::move(other.stats_))
+      stats_(std::move(other.stats_)),
+      phenotype_(std::move(other.phenotype_))
 {
     // Move constructor
 }
@@ -68,18 +81,18 @@ void Organism::swap(Organism& other) noexcept
     using std::swap;
     swap(bytecode_, other.bytecode_);
     swap(stats_, other.stats_);
-    // Add swap for any other members if needed
+    swap(phenotype_, other.phenotype_);
 }
 
-Organism::OrganismPtr Organism::replicate(double mutation_rate, uint32_t max_mutations) const {
+Organism::OrganismPtr Organism::replicate(const BytecodeVM& vm, double mutation_rate, uint32_t max_mutations) const {
     std::lock_guard<std::mutex> lock(mutex_);
     
     // Create new bytecode with mutations
     Bytecode new_bytecode = bytecode_;
     uint32_t mutations_applied = applyMutations(new_bytecode, mutation_rate, max_mutations);
     
-    // Create new organism
-    auto child = std::make_shared<Organism>(new_bytecode, stats_.id);
+    // Create new organism, passing the vm to generate its phenotype
+    auto child = std::make_shared<Organism>(new_bytecode, vm, stats_.id);
     child->stats_.mutation_count = mutations_applied;
     child->stats_.generation = stats_.generation + 1;
     
@@ -88,6 +101,11 @@ Organism::OrganismPtr Organism::replicate(double mutation_rate, uint32_t max_mut
     stats_.last_replication = Clock::now();
     
     return child;
+}
+
+const Organism::Bytecode& Organism::getBytecode() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return bytecode_;
 }
 
 void Organism::setFitnessScore(double score) {
@@ -111,6 +129,11 @@ Organism::Stats Organism::getStats() const {
     return stats_;
 }
 
+const Organism::Image& Organism::getPhenotype() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return phenotype_;
+}
+
 nlohmann::json Organism::serialize() const {
     std::lock_guard<std::mutex> lock(mutex_);
 
@@ -124,7 +147,7 @@ nlohmann::json Organism::serialize() const {
     return organism_json;
 }
 
-bool Organism::deserialize(const std::string& data) {
+bool Organism::deserialize(const std::string& data, const BytecodeVM& vm) {
     std::lock_guard<std::mutex> lock(mutex_);
     try {
         nlohmann::json organism_json = nlohmann::json::parse(data);
@@ -133,6 +156,9 @@ bool Organism::deserialize(const std::string& data) {
         stats_.parent_id = organism_json["parent_id"];
         stats_.fitness_score = organism_json["fitness_score"];
         bytecode_ = organism_json["bytecode"].get<std::vector<uint8_t>>();
+
+        // Regenerate the phenotype after loading the bytecode
+        phenotype_ = vm.execute(bytecode_);
         return true;
     } catch (const std::exception& e) {
         spdlog::error("Failed to deserialize organism: {}", e.what());

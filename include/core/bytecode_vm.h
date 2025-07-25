@@ -96,7 +96,7 @@ public:
      * @param bytecode Bytecode to execute
      * @return Generated image
      */
-    Image execute(const Bytecode& bytecode);
+    Image execute(const Bytecode& bytecode) const;
 
     /**
      * @brief Execute bytecode with custom initial state
@@ -104,7 +104,7 @@ public:
      * @param initial_state Initial VM state
      * @return Generated image
      */
-    Image execute(const Bytecode& bytecode, const VMState& initial_state);
+    Image execute(const Bytecode& bytecode, const VMState& initial_state) const;
 
     struct ExecutionStats {
         uint32_t instructions_executed;
@@ -130,7 +130,7 @@ public:
     /**
      * @brief Reset VM state
      */
-    void reset();
+    void reset() const;
 
     /**
      * @brief Set VM configuration
@@ -158,12 +158,19 @@ public:
      */
     std::string disassemble(const Bytecode& bytecode) const;
 
+    /**
+     * @brief Generate random, valid bytecode.
+     * @param size The desired size of the bytecode.
+     * @return A vector of bytes representing the bytecode.
+     */
+    Bytecode generateRandomBytecode(uint32_t size) const;
+
 private:
     Config config_;                     ///< VM configuration
-    VMState state_;                     ///< Current VM state
-    Image canvas_;                      ///< Drawing canvas
-    ExecutionStats last_stats_;         ///< Last execution statistics
-    std::mt19937 rng_;                  ///< Random number generator
+    mutable VMState state_;             ///< Current VM state
+    mutable Image canvas_;              ///< Drawing canvas
+    mutable ExecutionStats last_stats_; ///< Last execution statistics
+    mutable std::mt19937 rng_;          ///< Random number generator
 
     /**
      * @brief Execute single instruction
@@ -171,21 +178,21 @@ private:
      * @param operand Instruction operand (if any)
      * @return True if execution should continue
      */
-    bool executeInstruction(Opcode opcode, uint8_t operand = 0);
+    bool executeInstruction(Opcode opcode, uint8_t operand = 0) const;
 
     /**
      * @brief Push value to stack
      * @param value Value to push
      * @return True if successful
      */
-    bool pushStack(uint8_t value);
+    bool pushStack(uint8_t value) const;
 
     /**
      * @brief Pop value from stack
      * @param value Output value
      * @return True if successful
      */
-    bool popStack(uint8_t& value);
+    bool popStack(uint8_t& value) const;
 
     /**
      * @brief Peek top stack value
@@ -197,7 +204,7 @@ private:
     /**
      * @brief Draw pixel at current position
      */
-    void drawPixel();
+    void drawPixel() const;
 
     /**
      * @brief Check if coordinates are within bounds
@@ -210,12 +217,12 @@ private:
     /**
      * @brief Initialize VM state
      */
-    void initializeState();
+    void initializeState() const;
 
     /**
      * @brief Reset execution statistics
      */
-    void resetStats();
+    void resetStats() const;
 };
 
 } // namespace evosim 

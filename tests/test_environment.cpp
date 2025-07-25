@@ -33,8 +33,10 @@ protected:
     std::unique_ptr<Environment> environment_;
     
     std::shared_ptr<Organism> createTestOrganism() {
-        Organism::Bytecode bytecode = {0x01, 0x42, 0x0B}; // PUSH 0x42, HALT
-        return std::make_shared<Organism>(bytecode, 0);
+        // This bytecode just pushes a value and halts, producing a blank image.
+        Organism::Bytecode bytecode = {0x01, 0x42, 0xFF}; // PUSH 0x42, HALT
+        BytecodeVM vm; // Create a default VM for test organism creation
+        return std::make_shared<Organism>(bytecode, vm, 0);
     }
 
     std::shared_ptr<Organism> createTestOrganismWithFitness(double fitness) {
@@ -213,6 +215,18 @@ TEST_F(EnvironmentTest, EvaluateFitness) {
     double fitness = environment_->evaluateFitness(organism);
     EXPECT_GE(fitness, 0.0);
     EXPECT_LE(fitness, 1.0);
+}
+
+TEST_F(EnvironmentTest, BlankOrganismHasZeroFitness) {
+    // This organism's bytecode does not draw anything, resulting in a blank (black) image.
+    // The `createTestOrganism` helper provides such an organism.
+    auto blank_organism = createTestOrganism();
+
+    // The fitness function should explicitly penalize blank/monochrome images
+    // to prevent stagnation, assigning them a fitness of zero.
+    double fitness = environment_->evaluateFitness(blank_organism);
+
+    EXPECT_DOUBLE_EQ(fitness, 0.0);
 }
 
 TEST_F(EnvironmentTest, SaveAndLoadState) {

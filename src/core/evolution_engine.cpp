@@ -152,7 +152,7 @@ bool EvolutionEngine::run_generation_() {
 }
 
 EvolutionEngine::EngineStats EvolutionEngine::getStats() const {
-    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(mutex_));
+    std::lock_guard<std::mutex> lock(mutex_);
     
     EngineStats stats = stats_;
     
@@ -390,10 +390,16 @@ void EvolutionEngine::collectMetrics() {
 std::string EvolutionEngine::generateFilename(const std::string& prefix, const std::string& extension) const {
     auto now = std::chrono::system_clock::now();
     auto time_t = std::chrono::system_clock::to_time_t(now);
-    
+
+    // std::localtime is not thread-safe. We must protect access to it.
+    // A static mutex is a simple way to ensure safety across all instances.
+    static std::mutex time_mutex;
+    std::lock_guard<std::mutex> lock(time_mutex);
+    std::tm tm = *std::localtime(&time_t);
+
     std::ostringstream oss;
     oss << config_.save_directory << "/" << prefix << "_";
-    oss << std::put_time(std::localtime(&time_t), "%Y%m%d_%H%M%S");
+    oss << std::put_time(&tm, "%Y%m%d_%H%M%S");
     oss << "." << extension;
     
     return oss.str();

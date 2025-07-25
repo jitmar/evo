@@ -33,8 +33,7 @@ void Environment::initialize(uint32_t bytecode_size) {
     
     // Generate initial population
     for (uint32_t i = 0; i < config_.initial_population; ++i) {
-        auto bytecode = generateRandomBytecode(bytecode_size);
-        auto organism = std::make_shared<Organism>(bytecode, 0);
+        auto organism = std::make_shared<Organism>(vm_, bytecode_size, 0);
         population_[organism->getStats().id] = organism;
         stats_.total_organisms_created++;
     }
@@ -116,7 +115,7 @@ bool Environment::removeOrganism(uint64_t organism_id) {
     return false;
 }
 
-std::shared_ptr<Organism> Environment::getOrganism(uint64_t organism_id) const {
+Environment::ConstOrganismPtr Environment::getOrganism(uint64_t organism_id) const {
     std::lock_guard<std::mutex> lock(mutex_);
     
     auto it = population_.find(organism_id);
@@ -148,6 +147,22 @@ double Environment::evaluateFitness(const OrganismPtr& organism) {
     // Generate image from organism's bytecode
     auto image = vm_.execute(organism->getBytecode());
     
+    // --- Early Exit for Blank Images (Anti-Stagnation) ---
+    // This is a crucial step to prevent evolution from getting stuck on the
+    // trivial "pitch black" or other monochrome solutions. We check if the
+    // image is effectively blank by looking at its standard deviation.
+    cv::Scalar mean, stddev;
+    cv::meanStdDev(image, mean, stddev);
+
+    // A very low sum of standard deviations across all color channels
+    // indicates a monochrome (single-color) image. We set a small threshold
+    // to account for minor noise. If it's monochrome, it's unfit.
+    const double stddev_sum = stddev[0] + stddev[1] + stddev[2];
+    if (stddev_sum < 1.0) {
+        // This image is effectively blank. Assign zero fitness to escape this local maximum.
+        return 0.0;
+    }
+
     // --- Component 1: Analyzer Score ---
     // The SymmetryAnalyzer computes a detailed, weighted fitness score based on its
     // own configuration (horizontal, vertical, rotational symmetry, complexity, etc.).
@@ -159,8 +174,6 @@ double Environment::evaluateFitness(const OrganismPtr& organism) {
     // This component rewards images that are not blank or monochrome, preventing
     // evolution from getting stuck on trivial solutions. We calculate the standard
     // deviation of the pixel values across all channels.
-    cv::Scalar mean, stddev;
-    cv::meanStdDev(image, mean, stddev);
     // Average the standard deviation across B, G, R channels and normalize.
     // For an 8-bit image, max stddev is ~127.5. We divide by a slightly larger
     // value and cap at 1.0 to keep it in a standard [0, 1] range.
@@ -232,7 +245,6 @@ uint32_t Environment::performSelection() {
 }
 
 uint32_t Environment::performReproduction() {
-    (void)population_.size(); // Suppress unused variable warning
     uint32_t target_size = std::min(config_.max_population, 
                                    std::max(config_.min_population,
                                            static_cast<uint32_t>(std::ceil(static_cast<double>(population_.size()) * 1.1))));
@@ -244,11 +256,12 @@ uint32_t Environment::performReproduction() {
         ++iterations;
         // Use unlocked helper to avoid deadlock
         auto parents = select_for_reproduction_unlocked_(1);
-        auto parent = parents[0];
-        if (!parent) {
-            continue;
+        if (parents.empty()) {
+            // No more viable parents, stop trying to reproduce.
+            break;
         }
-        auto offspring = parent->replicate(config_.mutation_rate, config_.max_mutations);
+        auto parent = parents[0];
+        auto offspring = parent->replicate(vm_, config_.mutation_rate, config_.max_mutations);
         if (!offspring) {
             continue;
         }
@@ -427,9 +440,9 @@ bool Environment::loadState(const std::string& filename) {
 
         if (state_json.contains("organisms")) {
             for (const auto& organism_json : state_json["organisms"]) {
-                auto organism = std::make_shared<Organism>(Organism::Bytecode{}, 0);
+                auto organism = std::make_shared<Organism>(Organism::Bytecode{}, vm_, 0);
                 // deserialize expects a string, so we dump the JSON object for one organism
-                if (organism->deserialize(organism_json.dump())) {
+                if (organism->deserialize(organism_json.dump(), vm_)) {
                     population_[organism->getStats().id] = organism;
                 } else {
                     spdlog::warn("Failed to deserialize an organism from state file.");
@@ -454,7 +467,7 @@ void Environment::clear() {
     stats_ = EnvironmentStats{};
 }
 
-std::shared_ptr<Organism> Environment::getBestOrganism() const {
+Environment::ConstOrganismPtr Environment::getBestOrganism() const {
     std::lock_guard<std::mutex> lock(mutex_);
     
     if (population_.empty()) return nullptr;
@@ -484,22 +497,11 @@ std::vector<Organism::Stats> Environment::getOrganismStats() const {
     return stats;
 }
 
-std::vector<Environment::OrganismPtr> Environment::getTopFittest(uint32_t count) const {
+std::vector<Environment::ConstOrganismPtr> Environment::getTopFittest(uint32_t count) const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return select_for_reproduction_unlocked_(count);
-}
-
-Organism::Bytecode Environment::generateRandomBytecode(uint32_t size) const {
-    Organism::Bytecode bytecode;
-    bytecode.reserve(size);
-    
-    std::uniform_int_distribution<uint8_t> dist(0, 255);
-    
-    for (uint32_t i = 0; i < size; ++i) {
-        bytecode.push_back(dist(rng_));
-    }
-    
-    return bytecode;
+	auto fittest_non_const = select_for_reproduction_unlocked_(count);
+	// Construct a new vector of const pointers from the vector of non-const pointers.
+	return {fittest_non_const.begin(), fittest_non_const.end()};
 }
 
 double Environment::calculateSelectionProbability(double fitness) const {
