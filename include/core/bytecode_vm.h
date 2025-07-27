@@ -6,6 +6,7 @@
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/highgui.hpp>
+#include "nlohmann/json.hpp"
 
 namespace evosim {
 
@@ -224,5 +225,23 @@ private:
      */
     void resetStats() const;
 };
+
+inline void to_json(nlohmann::json& j, const BytecodeVM::Config& c) {
+    j = nlohmann::json{
+        {"image_width", c.image_width},
+        {"image_height", c.image_height},
+        {"memory_size", c.memory_size},
+        {"stack_size", c.stack_size},
+        {"max_instructions", c.max_instructions}
+    };
+}
+
+inline void from_json(const nlohmann::json& j, BytecodeVM::Config& c) {
+    j.at("image_width").get_to(c.image_width);
+    j.at("image_height").get_to(c.image_height);
+    j.at("memory_size").get_to(c.memory_size);
+    j.at("stack_size").get_to(c.stack_size);
+    j.at("max_instructions").get_to(c.max_instructions);
+}
 
 } // namespace evosim 

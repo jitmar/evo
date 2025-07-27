@@ -4,6 +4,7 @@
 #include <opencv2/imgproc.hpp>
 #include <vector>
 #include <memory>
+#include "nlohmann/json.hpp"
 
 namespace evosim {
 
@@ -222,5 +223,39 @@ private:
      */
     double calculateVariance(const Image& image) const;
 };
+
+inline void to_json(nlohmann::json& j, const SymmetryAnalyzer::Config& c) {
+    j = nlohmann::json{
+        {"enable_horizontal", c.enable_horizontal},
+        {"enable_vertical", c.enable_vertical},
+        {"enable_diagonal", c.enable_diagonal},
+        {"enable_rotational", c.enable_rotational},
+        {"enable_complexity", c.enable_complexity},
+        {"horizontal_weight", c.horizontal_weight},
+        {"vertical_weight", c.vertical_weight},
+        {"diagonal_weight", c.diagonal_weight},
+        {"rotational_weight", c.rotational_weight},
+        {"complexity_weight", c.complexity_weight},
+        {"histogram_bins", c.histogram_bins},
+        {"noise_threshold", c.noise_threshold},
+        {"normalize_scores", c.normalize_scores}
+    };
+}
+
+inline void from_json(const nlohmann::json& j, SymmetryAnalyzer::Config& c) {
+    j.at("enable_horizontal").get_to(c.enable_horizontal);
+    j.at("enable_vertical").get_to(c.enable_vertical);
+    j.at("enable_diagonal").get_to(c.enable_diagonal);
+    j.at("enable_rotational").get_to(c.enable_rotational);
+    j.at("enable_complexity").get_to(c.enable_complexity);
+    j.at("horizontal_weight").get_to(c.horizontal_weight);
+    j.at("vertical_weight").get_to(c.vertical_weight);
+    j.at("diagonal_weight").get_to(c.diagonal_weight);
+    j.at("rotational_weight").get_to(c.rotational_weight);
+    j.at("complexity_weight").get_to(c.complexity_weight);
+    j.at("histogram_bins").get_to(c.histogram_bins);
+    j.at("noise_threshold").get_to(c.noise_threshold);
+    j.at("normalize_scores").get_to(c.normalize_scores);
+}
 
 } // namespace evosim 

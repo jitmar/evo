@@ -10,6 +10,7 @@
 #include <atomic>
 #include <chrono>
 #include <random>
+#include "nlohmann/json.hpp"
 
 namespace evosim {
 
@@ -40,6 +41,7 @@ public:
         double max_fitness;             ///< Maximum fitness score
         double min_fitness;             ///< Minimum fitness score
         double fitness_variance;        ///< Fitness variance
+        // TimePoint last_update is not serialized as it's transient state.
         TimePoint last_update;          ///< Last environment update
         uint64_t total_organisms_created; ///< Total organisms ever created
         uint64_t total_organisms_died;  ///< Total organisms that died
@@ -53,9 +55,9 @@ public:
         uint32_t initial_population; ///< Initial population size
         uint32_t initial_bytecode_size; ///< The initial size of bytecode for new organisms.
         uint32_t min_population;     ///< Minimum population size
+        uint32_t elite_count;        ///< Number of fittest organisms to preserve each generation.
         double mutation_rate;        ///< Base mutation rate
         uint32_t max_mutations;      ///< Maximum mutations per replication
-        double selection_pressure;   ///< Selection pressure (0-1)
         double resource_abundance;   ///< Resource abundance multiplier
         uint32_t generation_time_ms; ///< Generation time in milliseconds
         bool enable_aging;           ///< Enable organism aging
@@ -75,8 +77,8 @@ public:
 
         Config()
             : max_population(1000), initial_population(100),
-              initial_bytecode_size(64), min_population(10),
-              mutation_rate(0.01), max_mutations(5), selection_pressure(0.7),
+              initial_bytecode_size(64), min_population(10), elite_count(2),
+              mutation_rate(0.01), max_mutations(5),
               resource_abundance(1.0), generation_time_ms(1000),
               enable_aging(true), max_age_ms(30000), enable_competition(true),
               competition_intensity(0.5), enable_cooperation(false), cooperation_bonus(0.1),
@@ -158,6 +160,18 @@ public:
     void setConfig(const Config& config) { config_ = config; }
 
     /**
+     * @brief Set the configuration of the internal BytecodeVM.
+     * @param config The new configuration for the BytecodeVM.
+     */
+    void setVMConfig(const BytecodeVM::Config& config);
+
+    /**
+     * @brief Set the configuration of the internal SymmetryAnalyzer.
+     * @param config The new configuration for the SymmetryAnalyzer.
+     */
+    void setAnalyzerConfig(const SymmetryAnalyzer::Config& config);
+
+    /**
      * @brief Get the configuration of the internal BytecodeVM.
      * @return The BytecodeVM's configuration object.
      */
@@ -168,6 +182,12 @@ public:
      * @return The SymmetryAnalyzer's configuration object.
      */
     SymmetryAnalyzer::Config getAnalyzerConfig() const;
+
+    /**
+     * @brief Get the full configuration of the environment and its components.
+     * @return A JSON object containing all configuration data.
+     */
+    nlohmann::json getFullConfig() const;
 
     /**
      * @brief Evaluate organism fitness
@@ -250,7 +270,7 @@ private:
     void apply_resource_scarcity_();
     void apply_random_catastrophe_();
     void apply_predation_();
-    void apply_selection_pressure_();
+    void remove_random_organisms_unlocked_(uint32_t count);
     void apply_environmental_pressures_unlocked_();
 
     /**
@@ -294,5 +314,80 @@ private:
 
     std::vector<OrganismPtr> select_for_reproduction_unlocked_(uint32_t count) const;
 };
+
+inline void to_json(nlohmann::json& j, const Environment::Config& c) {
+    j = nlohmann::json{
+        {"max_population", c.max_population},
+        {"initial_population", c.initial_population},
+        {"initial_bytecode_size", c.initial_bytecode_size},
+        {"min_population", c.min_population},
+        {"elite_count", c.elite_count},
+        {"mutation_rate", c.mutation_rate},
+        {"max_mutations", c.max_mutations},
+        {"resource_abundance", c.resource_abundance},
+        {"generation_time_ms", c.generation_time_ms},
+        {"enable_aging", c.enable_aging},
+        {"max_age_ms", c.max_age_ms},
+        {"enable_competition", c.enable_competition},
+        {"competition_intensity", c.competition_intensity},
+        {"enable_cooperation", c.enable_cooperation},
+        {"cooperation_bonus", c.cooperation_bonus},
+        {"enable_predation", c.enable_predation},
+        {"enable_random_catastrophes", c.enable_random_catastrophes},
+        {"fitness_weight_symmetry", c.fitness_weight_symmetry},
+        {"fitness_weight_variation", c.fitness_weight_variation}
+    };
+}
+
+inline void from_json(const nlohmann::json& j, Environment::Config& c) {
+    j.at("max_population").get_to(c.max_population);
+    j.at("initial_population").get_to(c.initial_population);
+    j.at("initial_bytecode_size").get_to(c.initial_bytecode_size);
+    j.at("min_population").get_to(c.min_population);
+    j.at("elite_count").get_to(c.elite_count);
+    j.at("mutation_rate").get_to(c.mutation_rate);
+    j.at("max_mutations").get_to(c.max_mutations);
+    j.at("resource_abundance").get_to(c.resource_abundance);
+    j.at("generation_time_ms").get_to(c.generation_time_ms);
+    j.at("enable_aging").get_to(c.enable_aging);
+    j.at("max_age_ms").get_to(c.max_age_ms);
+    j.at("enable_competition").get_to(c.enable_competition);
+    j.at("competition_intensity").get_to(c.competition_intensity);
+    j.at("enable_cooperation").get_to(c.enable_cooperation);
+    j.at("cooperation_bonus").get_to(c.cooperation_bonus);
+    j.at("enable_predation").get_to(c.enable_predation);
+    j.at("enable_random_catastrophes").get_to(c.enable_random_catastrophes);
+    j.at("fitness_weight_symmetry").get_to(c.fitness_weight_symmetry);
+    j.at("fitness_weight_variation").get_to(c.fitness_weight_variation);
+}
+
+inline void to_json(nlohmann::json& j, const Environment::EnvironmentStats& s) {
+    j = nlohmann::json{
+        {"generation", s.generation},
+        {"population_size", s.population_size},
+        {"max_population", s.max_population},
+        {"births_this_gen", s.births_this_gen},
+        {"deaths_this_gen", s.deaths_this_gen},
+        {"avg_fitness", s.avg_fitness},
+        {"max_fitness", s.max_fitness},
+        {"min_fitness", s.min_fitness},
+        {"fitness_variance", s.fitness_variance},
+        {"total_organisms_created", s.total_organisms_created},
+        {"total_organisms_died", s.total_organisms_died}};
+}
+
+inline void from_json(const nlohmann::json& j, Environment::EnvironmentStats& s) {
+    j.at("generation").get_to(s.generation);
+    j.at("population_size").get_to(s.population_size);
+    j.at("max_population").get_to(s.max_population);
+    j.at("births_this_gen").get_to(s.births_this_gen);
+    j.at("deaths_this_gen").get_to(s.deaths_this_gen);
+    j.at("avg_fitness").get_to(s.avg_fitness);
+    j.at("max_fitness").get_to(s.max_fitness);
+    j.at("min_fitness").get_to(s.min_fitness);
+    j.at("fitness_variance").get_to(s.fitness_variance);
+    j.at("total_organisms_created").get_to(s.total_organisms_created);
+    j.at("total_organisms_died").get_to(s.total_organisms_died);
+}
 
 } // namespace evosim 

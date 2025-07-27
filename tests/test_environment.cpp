@@ -14,7 +14,6 @@ protected:
         config.min_population = 1;
         config.mutation_rate = 0.01;
         config.max_mutations = 3;
-        config.selection_pressure = 0.7;
         config.resource_abundance = 1.0;
         config.generation_time_ms = 1000;
         config.enable_aging = true;
@@ -114,7 +113,6 @@ TEST_F(EnvironmentTest, UpdateEnvironment) {
     new_config.min_population = 5;
     new_config.max_population = 20;
     new_config.mutation_rate = 0.1;
-    new_config.selection_pressure = 0.2;
     environment_->setConfig(new_config);
     // Add multiple organisms to ensure meaningful test
     for (int i = 0; i < 5; ++i) {
@@ -153,7 +151,6 @@ TEST_F(EnvironmentTest, SetConfig) {
     new_config.min_population = 2;
     new_config.mutation_rate = 0.02;
     new_config.max_mutations = 4;
-    new_config.selection_pressure = 0.8;
     new_config.resource_abundance = 1.5;
     new_config.generation_time_ms = 2000;
     new_config.enable_aging = false;
@@ -173,40 +170,6 @@ TEST_F(EnvironmentTest, SetConfig) {
     EXPECT_EQ(config.enable_cooperation, true);
     EXPECT_EQ(config.enable_predation, false);
     EXPECT_EQ(config.enable_random_catastrophes, false);
-}
-
-TEST_F(EnvironmentTest, ApplyEnvironmentalPressuresSelectsCorrectly) {
-    // This test verifies that selection pressure correctly removes low-fitness organisms.
-
-    // 1. Configure the environment for high selection pressure and disable other pressures.
-    Environment::Config config = environment_->getConfig();
-    config.selection_pressure = 0.5; // Target removing 50% of the population.
-    config.enable_aging = false;
-    config.enable_competition = false;
-    config.enable_predation = false;
-    config.enable_random_catastrophes = false;
-    config.resource_abundance = 10.0; // Effectively infinite resources.
-    environment_->setConfig(config);
-
-    // 2. Create a predictable population: 5 high-fitness, 5 low-fitness.
-    for (int i = 0; i < 5; ++i) {
-        environment_->addOrganism(createTestOrganismWithFitness(0.9)); // High fitness
-    }
-    for (int i = 0; i < 5; ++i) {
-        environment_->addOrganism(createTestOrganismWithFitness(0.1)); // Low fitness
-    }
-    ASSERT_EQ(environment_->getPopulation().size(), 10);
-
-    // 3. Apply the pressures. This should trigger apply_selection_pressure_().
-    environment_->applyEnvironmentalPressures();
-
-    // 4. Verify the outcome: The 5 low-fitness organisms should have been removed.
-    auto final_population = environment_->getPopulation();
-    EXPECT_EQ(final_population.size(), 5);
-    for (const auto& pair : final_population) {
-        ASSERT_NE(pair.second, nullptr);
-        EXPECT_NEAR(pair.second->getFitnessScore(), 0.9, 1e-6);
-    }
 }
 
 TEST_F(EnvironmentTest, EvaluateFitness) {
@@ -235,7 +198,6 @@ TEST_F(EnvironmentTest, SaveAndLoadState) {
     // Use a "calm" configuration for this test to make population size predictable.
     // Disable selection pressures that would cull the population.
     Environment::Config calm_config = environment_->getConfig();
-    calm_config.selection_pressure = 0.0;
     calm_config.enable_competition = false;
     calm_config.enable_aging = false;
     calm_config.enable_predation = false;

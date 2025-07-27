@@ -80,7 +80,10 @@ bool initializeLogging(const po::variables_map& vm) {
         auto logger = std::make_shared<spdlog::logger>("evosimd", begin(sinks), end(sinks));
         logger->set_level(spdlog::level::from_str(vm["log-level"].as<std::string>()));
         spdlog::set_default_logger(logger);
-        spdlog::flush_on(spdlog::level::info);
+        // --- FIX: Flush on debug to see messages immediately before a hang ---
+        // By default, logs are buffered. Flushing on 'info' means we won't see 'debug'
+        // messages if the program hangs before the next 'info' log.
+        spdlog::flush_on(spdlog::level::debug);
 
     } catch (const spdlog::spdlog_ex& ex) {
         std::cerr << "Log initialization failed: " << ex.what() << std::endl;

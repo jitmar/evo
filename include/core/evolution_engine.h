@@ -6,6 +6,7 @@
 #include <condition_variable>
 #include <functional>
 #include <chrono>
+#include <deque>
 
 namespace evosim {
 
@@ -53,12 +54,13 @@ public:
         uint32_t metrics_interval;  ///< Metrics collection interval
         bool enable_backup;         ///< Enable automatic backups
         uint32_t backup_interval;   ///< Backup interval in generations
+        uint64_t max_generations;   ///< Stop after N generations (0 for infinite)
         
         Config() : auto_start(false), enable_logging(true), enable_save_state(true),
                    save_interval_generations(100), save_directory("saves"),
                    enable_visualization(false), visualization_interval(10),
                    enable_metrics(true), metrics_interval(50), enable_backup(true),
-                   backup_interval(1000) {}
+                   backup_interval(1000), max_generations(0) {}
     };
 
     /**
@@ -204,7 +206,7 @@ public:
      * @brief Get evolution history
      * @return Vector of recent events
      */
-    std::vector<Event> getHistory() const;
+    std::deque<Event> getHistory() const;
 
     /**
      * @brief Clear evolution history
@@ -226,11 +228,19 @@ private:
     std::atomic<bool> paused_;          ///< Engine paused state
     std::atomic<bool> should_stop_;     ///< Stop request flag
     std::thread evolution_thread_;      ///< Evolution thread
-    mutable std::mutex mutex_;          ///< Thread safety mutex
-    std::condition_variable cv_;        ///< Condition variable for synchronization
+    // TODO: Consider refactoring the locking strategy to use a standard std::mutex
+    // instead of a recursive_mutex. This would require careful analysis to ensure
+    // no deadlocks occur (e.g., by using private non-locking helper methods).
+    mutable std::recursive_mutex mutex_;///< Recursive mutex for thread safety
+    std::condition_variable_any cv_;    ///< Condition variable for synchronization (works with recursive_mutex)
     EventCallback event_callback_;      ///< Event callback function
-    std::vector<Event> history_;        ///< Evolution history
+    std::deque<Event> history_;         ///< Evolution history
     mutable std::mutex history_mutex_;  ///< History mutex
+
+    /**
+     * @brief Logs the effective configuration of the engine and its components.
+     */
+    void logEffectiveConfig() const;
 
     /**
      * @brief Main evolution loop

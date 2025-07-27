@@ -25,6 +25,16 @@ Environment::Environment(
     initialize(config_.initial_bytecode_size);
 }
 
+void Environment::setVMConfig(const BytecodeVM::Config& config) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    vm_.setConfig(config);
+}
+
+void Environment::setAnalyzerConfig(const SymmetryAnalyzer::Config& config) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    analyzer_.setConfig(config);
+}
+
 void Environment::initialize(uint32_t bytecode_size) {
     std::lock_guard<std::mutex> lock(mutex_);
     
@@ -43,7 +53,7 @@ void Environment::initialize(uint32_t bytecode_size) {
 
 bool Environment::update() {
     try {
-        // Step 1: Get a snapshot of the current population without holding the lock for too long.
+        // Step 1: Get a snapshot of the current population to evaluate fitness.
         std::vector<OrganismPtr> current_population;
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -52,25 +62,38 @@ bool Environment::update() {
             }
             current_population.reserve(population_.size());
             for (const auto& pair : population_) {
-                if (pair.second) {
-                    current_population.push_back(pair.second);
-                }
+                current_population.push_back(pair.second);
             }
         }
 
         // Step 2: Perform the expensive fitness evaluation WITHOUT holding the main environment lock.
-        // The Organism's setFitnessScore method is individually thread-safe.
         for (const auto& organism : current_population) {
             double fitness = evaluateFitness(organism);
             organism->setFitnessScore(fitness);
         }
 
-        // Step 3: Re-acquire the lock to perform state-modifying operations.
+        // Step 3: Re-acquire the lock to apply pressures and reproduce.
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            apply_environmental_pressures_unlocked_();
-            uint32_t deaths = performSelection();
+
+            // --- Elitism: Preserve the fittest organisms ---
+            const uint32_t elite_count = std::min(static_cast<uint32_t>(population_.size()), config_.elite_count);
+            std::vector<OrganismPtr> elites = select_for_reproduction_unlocked_(elite_count);
+            for (const auto& elite_org : elites) {
+                population_.erase(elite_org->getStats().id); // Temporarily remove them from pressure
+            }
+
+            // --- Apply pressures to the non-elite population ---
+            apply_environmental_pressures_unlocked_(); // Applies predation, catastrophes, etc.
+            uint32_t deaths = performSelection();      // Applies aging, competition, etc.
             stats_.deaths_this_gen = deaths;
+
+            // --- Add the elites back, safe from harm ---
+            for (const auto& elite_org : elites) {
+                population_[elite_org->getStats().id] = elite_org;
+            }
+
+            // --- Reproduce from the surviving population (including elites) ---
             uint32_t births = performReproduction();
             stats_.births_this_gen = births;
             stats_.generation++;
@@ -139,6 +162,16 @@ BytecodeVM::Config Environment::getVMConfig() const {
 
 SymmetryAnalyzer::Config Environment::getAnalyzerConfig() const {
     return analyzer_.getConfig();
+}
+
+nlohmann::json Environment::getFullConfig() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    nlohmann::json full_config;
+    // The to_json helpers for each config struct will be called automatically by the json library.
+    full_config["environment"] = config_;
+    full_config["bytecode_vm"] = vm_.getConfig();
+    full_config["symmetry_analyzer"] = analyzer_.getConfig();
+    return full_config;
 }
 
 double Environment::evaluateFitness(const OrganismPtr& organism) {
@@ -286,9 +319,6 @@ void Environment::applyEnvironmentalPressures() {
 
 // Private, NOT thread-safe
 void Environment::apply_environmental_pressures_unlocked_() {
-    if (population_.size() < 2) {
-        return;
-    }
     apply_resource_scarcity_();
     if (config_.enable_random_catastrophes) {
         apply_random_catastrophe_();
@@ -296,22 +326,40 @@ void Environment::apply_environmental_pressures_unlocked_() {
     if (config_.enable_predation) {
         apply_predation_();
     }
-    apply_selection_pressure_();
+}
+
+void Environment::remove_random_organisms_unlocked_(uint32_t count) {
+    if (count == 0 || population_.empty()) {
+        return;
+    }
+
+    // Ensure we don't try to remove more organisms than exist.
+    count = std::min(count, static_cast<uint32_t>(population_.size()));
+
+    // NOTE: For very large populations, creating and shuffling this vector could be a
+    // performance consideration. For now, it's clear and correct.
+    std::vector<uint64_t> ids;
+    ids.reserve(population_.size());
+    for (const auto& pair : population_) {
+        ids.push_back(pair.first);
+    }
+
+    std::shuffle(ids.begin(), ids.end(), rng_);
+
+    // Remove the first 'count' organisms from the shuffled list.
+    for (uint32_t i = 0; i < count; ++i) {
+        if (population_.erase(ids[i]) > 0) {
+            stats_.total_organisms_died++;
+        }
+    }
 }
 
 void Environment::apply_resource_scarcity_() {
     // Calculate sustainable population size based on resource abundance
     uint32_t sustainable_population = static_cast<uint32_t>(config_.max_population * config_.resource_abundance);
     if (population_.size() > sustainable_population) {
-        auto to_remove = static_cast<uint32_t>(population_.size() - sustainable_population);
-        // Example for random removal (resource scarcity, catastrophe, predation):
-        // NOTE: For large populations, shuffling this vector could be a parallelism bottleneck.
-        std::vector<uint64_t> ids;
-        for (const auto& pair : population_) ids.push_back(pair.first);
-        std::shuffle(ids.begin(), ids.end(), rng_);
-        for (size_t i = 0; i < to_remove && i < ids.size(); ++i) {
-            population_.erase(ids[i]);
-        }
+        uint32_t to_remove = static_cast<uint32_t>(population_.size() - sustainable_population);
+        remove_random_organisms_unlocked_(to_remove);
     }
 }
 
@@ -321,84 +369,93 @@ void Environment::apply_random_catastrophe_() {
     if (chance_dist(rng_) < 0.01 && !population_.empty()) {
         // Remove 10% of the population (at least 1 if population is small)
         uint32_t to_remove = std::max<uint32_t>(1, static_cast<uint32_t>(static_cast<double>(population_.size()) * 0.1));
-        // Example for random removal (resource scarcity, catastrophe, predation):
-        // NOTE: For large populations, shuffling this vector could be a parallelism bottleneck.
-        std::vector<uint64_t> ids;
-        for (const auto& pair : population_) ids.push_back(pair.first);
-        std::shuffle(ids.begin(), ids.end(), rng_);
-        for (size_t i = 0; i < to_remove && i < ids.size(); ++i) {
-            population_.erase(ids[i]);
-        }
+        remove_random_organisms_unlocked_(to_remove);
     }
 }
 
 void Environment::apply_predation_() {
-    if (population_.empty()) return;
-    // Remove up to 5% of the population (at least 1 if population is small)
-    uint32_t to_remove = std::max<uint32_t>(1, static_cast<uint32_t>(static_cast<double>(population_.size()) * 0.05));
-    std::vector<uint64_t> candidates;
-    // Build a list of organism IDs weighted by inverse fitness
-    for (const auto& pair : population_) {
-        if (pair.second) {
-            double fitness = pair.second->getFitnessScore();
-            int weight = static_cast<int>(std::max(1.0, 10.0 * (1.0 - fitness)));
-            for (int w = 0; w < weight; ++w) {
-                candidates.push_back(pair.first);
-            }
-        }
-    }
-    if (candidates.empty()) return;
-    std::shuffle(candidates.begin(), candidates.end(), rng_);
-    std::unordered_set<uint64_t> selected;
-    for (uint64_t id : candidates) {
-        if (selected.size() >= to_remove) break;
-        selected.insert(id);
-    }
-    for (uint64_t id : selected) {
-        population_.erase(id); // Directly erase from the map = death
-        stats_.total_organisms_died++;
-    }
-}
-
-void Environment::apply_selection_pressure_() {
-    if (population_.empty() || config_.selection_pressure <= 0.0) {
+    // Predation requires at least two organisms to be meaningful (a predator and prey).
+    if (population_.size() < 2) {
         return;
     }
-    // Cull a percentage of the lowest-fitness organisms
-    uint32_t to_remove = std::max<uint32_t>(1, static_cast<uint32_t>(static_cast<double>(population_.size()) * config_.selection_pressure));
-    // Sort organism IDs by fitness ascending
-    std::vector<std::pair<uint64_t, double>> id_fitness;
+
+    // Determine how many organisms to remove, up to 5% of the population.
+    // Ensure at least one is removed, but never the entire population.
+    uint32_t to_remove = std::max<uint32_t>(1, static_cast<uint32_t>(static_cast<double>(population_.size()) * 0.05));
+    to_remove = std::min(to_remove, static_cast<uint32_t>(population_.size() - 1));
+
+    std::vector<uint64_t> all_ids;
+    std::vector<double> weights;
+    all_ids.reserve(population_.size());
+    weights.reserve(population_.size());
+
+    // Weaker organisms (lower fitness) are more likely to be prey.
+    // Their weight for removal is higher. We use inverse fitness as the weight.
     for (const auto& pair : population_) {
         if (pair.second) {
-            id_fitness.emplace_back(pair.first, pair.second->getFitnessScore());
+            all_ids.push_back(pair.first);
+            // Add a small epsilon to avoid zero weight for organisms with perfect fitness.
+            double weight = 1.0 - pair.second->getFitnessScore() + 1e-6;
+            weights.push_back(weight);
         }
     }
-    std::sort(id_fitness.begin(), id_fitness.end(), [](const auto& a, const auto& b) {
-        return a.second < b.second;
-    });
-    for (uint32_t i = 0; i < to_remove && i < id_fitness.size(); ++i) {
-        population_.erase(id_fitness[i].first);
-        stats_.total_organisms_died++;
+
+    if (all_ids.empty()) {
+        return;
+    }
+
+    // Use a discrete distribution for efficient weighted random sampling without replacement.
+    std::discrete_distribution<> dist(weights.begin(), weights.end());
+    std::unordered_set<uint64_t> selected_for_removal;
+
+    // Sample until we have enough unique organisms to remove.
+    // Add a safety break to prevent infinite loops if something goes wrong.
+    for (size_t i = 0; i < to_remove * 5 && selected_for_removal.size() < to_remove; ++i) {
+        // Cast to size_t is safe as discrete_distribution returns a value in [0, n-1].
+        auto selected_index = static_cast<size_t>(dist(rng_));
+        selected_for_removal.insert(all_ids.at(selected_index));
+    }
+
+    // Remove the selected organisms.
+    for (uint64_t id : selected_for_removal) {
+        if (population_.erase(id) > 0) {
+            stats_.total_organisms_died++;
+        }
     }
 }
 
 bool Environment::saveState(const std::string& filename) const {
     std::lock_guard<std::mutex> lock(mutex_);
 
+    nlohmann::json data;
     try {
-        nlohmann::json state_json;
-        state_json["version"] = "ENVIRONMENT_STATE_V2";
-        state_json["generation"] = stats_.generation;
+        data["version"] = "ENVIRONMENT_STATE_V4"; // Version bump for RNG state
 
-        nlohmann::json organisms_json = nlohmann::json::array();
+        // Save all configurations
+        data["config"] = config_;
+        data["vm_config"] = vm_.getConfig();
+        data["analyzer_config"] = analyzer_.getConfig();
+
+        // Save full stats object
+        data["stats"] = stats_;
+
+        // --- Save RNG state ---
+        std::stringstream rng_stream;
+        rng_stream << rng_; // Attempt to serialize the RNG state
+        if (rng_stream.fail()) {
+            // This is unlikely but could happen if the RNG is in a bad state.
+            spdlog::error("Failed to serialize RNG state to stringstream. Checkpoint will be incomplete.");
+            data["rng_state"] = ""; // Save an empty string to indicate failure.
+        } else {
+            data["rng_state"] = rng_stream.str();
+        }
+
+        nlohmann::json& organisms_json = data["organisms"] = nlohmann::json::array();
         for (const auto& pair : population_) {
             if (pair.second) {
-                // serialize() now returns a json object directly
                 organisms_json.push_back(pair.second->serialize());
             }
         }
-        state_json["organisms"] = organisms_json;
-        state_json["population_size"] = organisms_json.size();
 
         std::ofstream file(filename);
         if (!file.is_open()) {
@@ -406,7 +463,7 @@ bool Environment::saveState(const std::string& filename) const {
             return false;
         }
 
-        file << state_json.dump(4);
+        file << data.dump(4);
 
         return true;
     } catch (const std::exception& e) {
@@ -416,30 +473,72 @@ bool Environment::saveState(const std::string& filename) const {
 }
 
 bool Environment::loadState(const std::string& filename) {
-    std::lock_guard<std::mutex> lock(mutex_);
-
+    spdlog::debug("Environment::loadState: Starting state load from '{}'...", filename);
+    nlohmann::json data;
     try {
-        std::ifstream file(filename);
-        if (!file.is_open()) {
-            spdlog::error("Failed to open file for loading state: {}", filename);
+        // --- Robust File Reading: Read to string first to avoid stream parsing hangs ---
+        spdlog::debug("Environment::loadState: Opening and reading file content...");
+        std::ifstream f(filename);
+        if (!f.is_open()) {
+            spdlog::error("Failed to open checkpoint file: {}", filename);
+            return false;
+        }
+        std::string file_contents((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        f.close();
+
+        spdlog::debug("Environment::loadState: File read complete ({} bytes). Parsing JSON...", file_contents.length());
+        data = nlohmann::json::parse(file_contents);
+        spdlog::debug("Environment::loadState: JSON parsed successfully.");
+
+    } catch (const std::exception& e) {
+        spdlog::error("Failed to read or parse checkpoint file '{}': {}", filename, e.what());
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    try {
+        std::string version = data.value("version", "UNKNOWN");
+        if (version != "ENVIRONMENT_STATE_V4" && version != "ENVIRONMENT_STATE_V3") {
+            spdlog::error("Invalid or unsupported environment state version in {}. Expected V3 or V4, got {}.", filename, version);
             return false;
         }
 
-        nlohmann::json state_json;
-        file >> state_json;
-
-        if (!state_json.contains("version") || state_json["version"] != "ENVIRONMENT_STATE_V2") {
-            spdlog::error("Invalid or missing environment state version in {}.", filename);
-            return false;
-        }
-
+        // Clear existing state
         population_.clear();
-        stats_ = {}; // Reset stats before loading
+        stats_ = {};
 
-        stats_.generation = state_json.value("generation", 0ULL);
+        // Load all configurations
+        config_ = data.at("config").get<Config>();
+        vm_.setConfig(data.at("vm_config").get<BytecodeVM::Config>());
+        analyzer_.setConfig(data.at("analyzer_config").get<SymmetryAnalyzer::Config>());
 
-        if (state_json.contains("organisms")) {
-            for (const auto& organism_json : state_json["organisms"]) {
+        // Load stats
+        stats_ = data.at("stats").get<EnvironmentStats>();
+
+        // --- Safely load RNG state (FIX for hang) ---
+        if (data.contains("rng_state") && !data.at("rng_state").is_null()) {
+            std::string rng_state_str = data.at("rng_state").get<std::string>();
+            if (!rng_state_str.empty()) {
+                std::stringstream rng_stream(rng_state_str);
+                rng_stream >> rng_; // Attempt to restore RNG state
+                if (rng_stream.fail()) {
+                    // If the stream fails (e.g., due to corrupt data), it can hang.
+                    // We must check the state and re-seed as a safe fallback.
+                    spdlog::warn("Failed to restore RNG state from checkpoint '{}'. State may be corrupt. Re-seeding RNG.", filename);
+                    rng_.seed(std::random_device{}());
+                }
+            } else {
+                 spdlog::warn("Checkpoint file '{}' contains an empty RNG state. Seeding new RNG.", filename);
+                 rng_.seed(std::random_device{}());
+            }
+        } else {
+            spdlog::warn("Loading older checkpoint '{}' without RNG state. Restart will not be fully reproducible. Seeding new RNG.", filename);
+            rng_.seed(std::random_device{}());
+        }
+
+        // Load organisms
+        if (data.contains("organisms")) {
+            for (const auto& organism_json : data.at("organisms")) {
                 auto organism = std::make_shared<Organism>(Organism::Bytecode{}, vm_, 0);
                 // deserialize expects a string, so we dump the JSON object for one organism
                 if (organism->deserialize(organism_json.dump(), vm_)) {
@@ -452,8 +551,8 @@ bool Environment::loadState(const std::string& filename) {
 
         updateStats();
         return true;
-    } catch (const nlohmann::json::parse_error& e) {
-        spdlog::error("JSON parse error while loading state from {}: {}", filename, e.what());
+    } catch (const nlohmann::json::exception& e) {
+        spdlog::error("JSON error while processing state from {}: {}", filename, e.what());
         return false;
     } catch (const std::exception& e) {
         spdlog::error("Exception while loading environment state from {}: {}", filename, e.what());

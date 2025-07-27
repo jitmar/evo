@@ -4,6 +4,7 @@
 #include <numeric>
 #include <iomanip>
 #include <sstream>
+#include "nlohmann/json.hpp"
 
 namespace evosim {
 

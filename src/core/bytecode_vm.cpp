@@ -3,6 +3,7 @@
 #include <random>
 #include <sstream>
 #include <iomanip>
+#include "nlohmann/json.hpp"
 
 namespace evosim {
 
@@ -597,8 +598,12 @@ BytecodeVM::Bytecode BytecodeVM::generateRandomBytecode(uint32_t size) const {
     // Use the VM's configuration to get valid coordinate ranges.
     const auto& vm_config = config_;
     std::uniform_int_distribution<uint8_t> rand_val(0, 255);
-    std::uniform_int_distribution<uint8_t> rand_x(0, vm_config.image_width - 1);
-    std::uniform_int_distribution<uint8_t> rand_y(0, vm_config.image_height - 1);
+    // Clamp the distribution range to what the SET_X/Y opcodes can handle (0-255).
+    // This prevents overflow if the configured image size is > 256.
+    uint8_t max_x = static_cast<uint8_t>(std::min(255u, vm_config.image_width - 1));
+    uint8_t max_y = static_cast<uint8_t>(std::min(255u, vm_config.image_height - 1));
+    std::uniform_int_distribution<uint8_t> rand_x(0, max_x);
+    std::uniform_int_distribution<uint8_t> rand_y(0, max_y);
 
     // --- Seed the bytecode with a few valid drawing instructions ---
     // This ensures the initial organisms are not completely blank and gives

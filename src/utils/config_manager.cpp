@@ -56,7 +56,6 @@ Environment::Config ConfigManager::getEnvironmentConfig() const {
     get_value(env_node["min_population"], cfg.min_population);
     get_value(env_node["mutation_rate"], cfg.mutation_rate);
     get_value(env_node["max_mutations"], cfg.max_mutations);
-    get_value(env_node["selection_pressure"], cfg.selection_pressure);
     get_value(env_node["resource_abundance"], cfg.resource_abundance);
     get_value(env_node["generation_time_ms"], cfg.generation_time_ms);
     get_value(env_node["enable_aging"], cfg.enable_aging);

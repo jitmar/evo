@@ -11,6 +11,23 @@
 
 namespace evosim {
 
+// --- JSON Serialization for EvolutionEngine::Config ---
+// This function tells the nlohmann::json library how to convert our Config
+// struct into a JSON object. It's found via Argument-Dependent Lookup (ADL).
+void to_json(nlohmann::json& j, const EvolutionEngine::Config& c) {
+    j = nlohmann::json{
+        {"auto_start", c.auto_start},
+        {"save_directory", c.save_directory},
+        {"max_generations", c.max_generations},
+        {"enable_save_state", c.enable_save_state},
+        {"save_interval_generations", c.save_interval_generations},
+        {"enable_backup", c.enable_backup},
+        {"backup_interval", c.backup_interval},
+        {"enable_metrics", c.enable_metrics},
+        {"metrics_interval", c.metrics_interval},
+        {"enable_logging", c.enable_logging}};
+}   
+
 EvolutionEngine::EvolutionEngine(EnvironmentPtr environment, const Config& config)
     : environment_(environment)
     , config_(config)
@@ -19,23 +36,36 @@ EvolutionEngine::EvolutionEngine(EnvironmentPtr environment, const Config& confi
     , should_stop_(false) {
     if (config_.auto_start) {
         start();
-    }
-}
+     }
+ }
 
 EvolutionEngine::~EvolutionEngine() {
     stop();
     if (evolution_thread_.joinable()) {
         evolution_thread_.join();
-    }
-}
+     }
+ }
 
 bool EvolutionEngine::start() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+
     if (running_) {
         return false; // Already running
+     }
+
+    // --- Automatic Resuming Logic ---
+    const std::string checkpoint_file = config_.save_directory + "/checkpoint.json";
+    if (std::filesystem::exists(checkpoint_file)) {
+        spdlog::info("Checkpoint file found at '{}'. Attempting to resume.", checkpoint_file);
+        if (loadState(checkpoint_file)) {
+            spdlog::info("Successfully resumed from checkpoint. Starting evolution at generation {}.", stats_.total_generations);
+        } else {
+            spdlog::warn("Failed to load from checkpoint. Starting a new simulation.");
+        }
     }
-    
+
+    logEffectiveConfig();
+
     try {
         running_ = true;
         paused_ = false;
@@ -58,7 +88,7 @@ bool EvolutionEngine::start() {
 
 bool EvolutionEngine::stop() {
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<std::recursive_mutex> lock(mutex_);
         if (!running_) {
             return false; // Not running
         }
@@ -69,7 +99,7 @@ bool EvolutionEngine::stop() {
         evolution_thread_.join();
     }
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<std::recursive_mutex> lock(mutex_);
         running_ = false;
         paused_ = false;
         stats_.is_running = false;
@@ -80,7 +110,7 @@ bool EvolutionEngine::stop() {
 }
 
 bool EvolutionEngine::pause() {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     
     if (!running_ || paused_) {
         return false;
@@ -95,7 +125,7 @@ bool EvolutionEngine::pause() {
 }
 
 bool EvolutionEngine::resume() {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     
     if (!running_ || !paused_) {
         return false;
@@ -123,7 +153,7 @@ bool EvolutionEngine::run_generation_() {
     // This is the key change to prevent deadlocks with getStats().
     if (environment_) {
         if (!environment_->update()) {
-            std::lock_guard<std::mutex> lock(mutex_); // Lock only to emit the event
+            std::lock_guard<std::recursive_mutex> lock(mutex_); // Lock only to emit the event
             emitEvent({EventType::ERROR_OCCURRED, stats_.total_generations, Clock::now(), "Environment update failed for the generation.", 0.0, 0});
             return false;
         }
@@ -133,7 +163,7 @@ bool EvolutionEngine::run_generation_() {
 
     // --- Acquire lock only to update the engine's internal state ---
     try {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<std::recursive_mutex> lock(mutex_);
         // Re-check stop condition now that we have the lock, in case a stop was requested during the update.
         if (should_stop_.load()) {
             return false;
@@ -143,16 +173,23 @@ bool EvolutionEngine::run_generation_() {
         emitEvent({EventType::GENERATION_COMPLETED, stats_.total_generations, Clock::now(), "Generation completed", 0.0, 0});
         updateStats();
         performPeriodicTasks(stats_.total_generations);
+
+        // --- Check for max generations stopping criterion ---
+        if (config_.max_generations > 0 && stats_.total_generations >= config_.max_generations) {
+            spdlog::info("Reached max generations ({}), stopping evolution.", config_.max_generations);
+            should_stop_ = true;
+        }
+
         return true;
     } catch (const std::exception& e) {
-        std::lock_guard<std::mutex> lock(mutex_); // Lock to emit the event
+        std::lock_guard<std::recursive_mutex> lock(mutex_); // Lock to emit the event
         emitEvent({EventType::ERROR_OCCURRED, stats_.total_generations, Clock::now(), "Error in generation: " + std::string(e.what()), 0.0, 0});
         return false;
     }
 }
 
 EvolutionEngine::EngineStats EvolutionEngine::getStats() const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     
     EngineStats stats = stats_;
     
@@ -179,23 +216,23 @@ EvolutionEngine::EngineStats EvolutionEngine::getStats() const {
 }
 
 void EvolutionEngine::registerEventCallback(EventCallback callback) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     event_callback_ = callback;
 }
 
 void EvolutionEngine::unregisterEventCallback() {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     event_callback_ = nullptr;
 }
 
 bool EvolutionEngine::saveState(const std::string& filename) {
     // Public-facing method. Acquire lock and call the internal implementation.
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     return saveState_unlocked(filename);
 }
 
 bool EvolutionEngine::loadState(const std::string& filename) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     
     // Loading can only be done when the engine is stopped to prevent race conditions.
     if (running_) {
@@ -204,16 +241,21 @@ bool EvolutionEngine::loadState(const std::string& filename) {
     }
 
     try {
+        spdlog::debug("EvolutionEngine::loadState: Attempting to delegate loading to Environment...");
         // Delegate the complex task of loading the population to the environment.
         if (!environment_->loadState(filename)) {
+            spdlog::warn("EvolutionEngine::loadState: environment->loadState returned false.");
             return false;
         }
+        spdlog::debug("EvolutionEngine::loadState: Environment loading completed successfully.");
 
         // Reset engine-specific runtime stats, but sync with the loaded environment state.
+        spdlog::debug("EvolutionEngine::loadState: Resetting engine stats and syncing from environment.");
         stats_ = {}; // Reset runtime, etc.
         stats_.start_time = Clock::now(); // A new "run" starts now.
         
         // Get the loaded stats from the environment
+        spdlog::debug("EvolutionEngine::loadState: Fetching stats from environment...");
         auto env_stats = environment_->getStats();
         stats_.total_generations = env_stats.generation;
         stats_.current_population = env_stats.population_size;
@@ -221,6 +263,7 @@ bool EvolutionEngine::loadState(const std::string& filename) {
         stats_.current_best_fitness = env_stats.max_fitness;
         
         emitEvent({EventType::STATE_LOADED, stats_.total_generations, Clock::now(), "State loaded from " + filename, 0.0, 0});
+        spdlog::debug("EvolutionEngine::loadState: State load finished.");
         
         return true;
     } catch (const std::exception& e) {
@@ -246,7 +289,7 @@ bool EvolutionEngine::waitForCompletion(uint32_t timeout_ms) {
     return !running_;
 }
 
-std::vector<EvolutionEngine::Event> EvolutionEngine::getHistory() const {
+std::deque<EvolutionEngine::Event> EvolutionEngine::getHistory() const {
     std::lock_guard<std::mutex> lock(history_mutex_);
     return history_;
 }
@@ -259,21 +302,21 @@ void EvolutionEngine::clearHistory() {
 bool EvolutionEngine::exportData(const std::string& filename) const {
     try {
         std::ofstream file(filename);
-        if (!file.is_open()) {
+        if (!file) {
+            spdlog::error("Failed to open file for export: {}", filename);
             return false;
         }
         
         auto stats = getStats();
-        
-        file << "Evolution Data Export\n";
-        file << "=====================\n\n";
-        file << "Total Generations: " << stats.total_generations << "\n";
-        file << "Total Runtime (ms): " << stats.total_runtime_ms << "\n";
-        file << "Generations per Second: " << stats.generations_per_second << "\n";
-        file << "Current Population: " << stats.current_population << "\n";
-        file << "Current Best Fitness: " << stats.current_best_fitness << "\n";
-        file << "Current Average Fitness: " << stats.current_avg_fitness << "\n";
-        
+        nlohmann::json data;
+        data["summary_stats"]["total_generations"] = stats.total_generations;
+        data["summary_stats"]["total_runtime_ms"] = stats.total_runtime_ms;
+        data["summary_stats"]["generations_per_second"] = stats.generations_per_second;
+        data["summary_stats"]["current_population"] = stats.current_population;
+        data["summary_stats"]["current_best_fitness"] = stats.current_best_fitness;
+        data["summary_stats"]["current_avg_fitness"] = stats.current_avg_fitness;
+
+        file << data.dump(4); // Pretty-print JSON with 4-space indent
         return true;
     } catch (const std::exception& e) {
         spdlog::error("Failed to export data to {}: {}", filename, e.what());
@@ -282,10 +325,8 @@ bool EvolutionEngine::exportData(const std::string& filename) const {
 }
 
 void EvolutionEngine::evolutionLoop() {
-    int loop_count = 0;
-    (void)loop_count;
     while (true) {
-        std::unique_lock<std::mutex> lock(mutex_);
+        std::unique_lock<std::recursive_mutex> lock(mutex_);
         if (should_stop_) {
             break;
         }
@@ -302,11 +343,10 @@ void EvolutionEngine::evolutionLoop() {
             break;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        ++loop_count;
     }
     // Set stats_.is_running to false before exiting thread
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<std::recursive_mutex> lock(mutex_);
         stats_.is_running = false;
         stats_.is_paused = false;
     }
@@ -320,9 +360,10 @@ void EvolutionEngine::emitEvent(const Event& event) {
     std::lock_guard<std::mutex> lock(history_mutex_);
     history_.push_back(event);
     
-    // Keep history size manageable
-    if (history_.size() > 1000) {
-        history_.erase(history_.begin(), history_.begin() + 100);
+    // Keep history size manageable, trim to 1000.
+    // std::deque::pop_front() is an O(1) operation.
+    while (history_.size() > 1000) {
+        history_.pop_front();
     }
 }
 
@@ -340,7 +381,8 @@ void EvolutionEngine::updateStats() {
 void EvolutionEngine::performPeriodicTasks(uint64_t generation) {
     // Save state if enabled
     if (config_.enable_save_state && generation % config_.save_interval_generations == 0) {
-        saveState_unlocked(); // Call the unlocked helper to avoid deadlock
+        // Save to a consistent checkpoint file for automatic resuming.
+        saveState_unlocked(config_.save_directory + "/checkpoint.json");
     }
     
     // Save backup if enabled
@@ -381,6 +423,22 @@ bool EvolutionEngine::saveState_unlocked(const std::string& filename) {
         spdlog::error("Exception while saving state: {}", e.what());
         return false;
     }
+}
+
+void EvolutionEngine::logEffectiveConfig() const {
+    if (!config_.enable_logging) {
+        return;
+    }
+
+    nlohmann::json full_config;
+    full_config["evolution_engine"] = config_;
+    if (environment_) {
+        full_config["environment"] = environment_->getConfig();
+        full_config["bytecode_vm"] = environment_->getVMConfig();
+        full_config["symmetry_analyzer"] = environment_->getAnalyzerConfig();
+    }
+
+    spdlog::info("Starting evolution with the following effective configuration:\n{}", full_config.dump(4));
 }
 
 void EvolutionEngine::collectMetrics() {
