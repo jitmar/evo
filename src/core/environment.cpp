@@ -94,7 +94,10 @@ bool Environment::update() {
             }
 
             // --- Reproduce from the surviving population (including elites) ---
-            uint32_t births = performReproduction();
+            // Create a single, sorted list of all survivors to act as the reproduction pool.
+            // This is much more efficient than re-sorting inside the reproduction loop.
+            std::vector<OrganismPtr> reproduction_pool = select_for_reproduction_unlocked_(static_cast<uint32_t>(population_.size()));
+            uint32_t births = performReproduction(reproduction_pool);
             stats_.births_this_gen = births;
             stats_.generation++;
             stats_.last_update = Clock::now();
@@ -277,23 +280,27 @@ uint32_t Environment::performSelection() {
     return initial_size - final_size;
 }
 
-uint32_t Environment::performReproduction() {
+uint32_t Environment::performReproduction(const std::vector<OrganismPtr>& reproduction_pool) {
     uint32_t target_size = std::min(config_.max_population, 
                                    std::max(config_.min_population,
                                            static_cast<uint32_t>(std::ceil(static_cast<double>(population_.size()) * 1.1))));
     std::vector<OrganismPtr> new_organisms;
     const size_t max_iterations = 10 * target_size; // Safety limit
     size_t iterations = 0;
+    size_t parent_idx = 0;
 
     while (population_.size() + new_organisms.size() < target_size && iterations < max_iterations) {
         ++iterations;
-        // Use unlocked helper to avoid deadlock
-        auto parents = select_for_reproduction_unlocked_(1);
-        if (parents.empty()) {
+        
+        if (reproduction_pool.empty()) {
             // No more viable parents, stop trying to reproduce.
             break;
         }
-        auto parent = parents[0];
+        // Cycle through the best parents from the pre-sorted pool. This is far more
+        // efficient than re-sorting and also improves genetic diversity by not
+        // only ever picking the single best organism.
+        auto parent = reproduction_pool[parent_idx % reproduction_pool.size()];
+        parent_idx++;
         auto offspring = parent->replicate(vm_, config_.mutation_rate, config_.max_mutations);
         if (!offspring) {
             continue;

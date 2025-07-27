@@ -13,6 +13,7 @@
 #include <filesystem>   // For creating directories
 #include <sstream>      // For building filenames
 #include <iomanip>      // For std::setprecision
+#include "opencv2/imgcodecs.hpp" // For cv::imwrite
 
 // for convenience
 using json = nlohmann::json;
@@ -71,15 +72,26 @@ int EvolutionController::runAsDaemon() {
 
         spdlog::info("Server listening on port {}", config_.server_port);
 
-        // 2. Start the evolution engine in its own thread
+        // 1. Start the evolution engine. This will either start a new simulation
+        // or resume from a checkpoint if one exists.
         if (!engine_->start()) {
             spdlog::error("Failed to start the evolution engine.");
             return 1;
         }
 
+        // 2. Save initial phenotypes ONLY if this is a new run (generation 0).
+        // This must be done AFTER starting the engine to know if we resumed.
+        if (config_.save_initial_phenotypes > 0) {
+            if (engine_->getStats().total_generations == 0) {
+                saveInitialPhenotypes(config_.save_initial_phenotypes);
+            } else {
+                spdlog::info("Skipping --save-initial-phenotypes because we resumed from a checkpoint at generation {}.", engine_->getStats().total_generations);
+            }
+        }
+
         is_running_ = true;
 
-        // 3. Accept connections in a loop
+        // 3. Accept client connections in a loop
         while (is_running_.load()) {
             tcp::socket socket(io_context_);
             boost::system::error_code ec;
@@ -206,6 +218,18 @@ void EvolutionController::handleClientConnection(tcp::socket socket) {
             } catch (const std::exception& e) {
                 response = {{"status", "error"}, {"message", "Failed to generate images: " + std::string(e.what())}};
             }
+        } else if (command == "generate-test-phenotype") {
+            uint32_t width = request.value("width", 256U);
+            uint32_t height = request.value("height", 256U);
+            std::string filepath = generateTestPhenotype(width, height);
+            if (!filepath.empty()) {
+                response["status"] = "ok";
+                response["message"] = "Test phenotype saved to " + filepath;
+                response["file"] = filepath;
+            } else {
+                response["status"] = "error";
+                response["message"] = "Failed to generate or save test phenotype.";
+            }
         } else {
             response = {{"status", "error"}, {"message", "Unknown command: " + command}};
         }
@@ -223,6 +247,66 @@ void EvolutionController::handleClientConnection(tcp::socket socket) {
     boost::asio::write(socket, boost::asio::buffer(response_str), ec);
     // The socket will be closed automatically by its destructor when it goes out of scope.
     spdlog::debug("Client connection handled.");
+}
+
+void EvolutionController::saveInitialPhenotypes(uint32_t count) {
+    spdlog::info("Saving {} initial phenotypes for inspection...", count);
+    auto env = engine_->getEnvironment();
+    if (!env) {
+        spdlog::error("Cannot save initial phenotypes: Environment is not available.");
+        return;
+    }
+
+    // We need a VM to execute bytecode. Get one with the correct configuration from the environment.
+    BytecodeVM temp_vm(env->getVMConfig());
+    
+    const std::string output_dir = "initial_phenotypes";
+    try {
+        std::filesystem::create_directories(output_dir);
+        
+        auto population = env->getPopulation(); // This is a map of the initial population
+        uint32_t saved_count = 0;
+        for (const auto& pair : population) {
+            if (saved_count >= count) break;
+
+            const auto& org = pair.second;
+            auto image = temp_vm.execute(org->getBytecode());
+            
+            std::stringstream ss;
+            ss << output_dir << "/initial_organism_" << org->getStats().id << ".png";
+            std::string filepath = ss.str();
+            
+            if (cv::imwrite(filepath, image)) {
+                saved_count++;
+            } else {
+                spdlog::warn("Failed to write image for initial organism {}", org->getStats().id);
+            }
+        }
+        spdlog::info("Successfully saved {} phenotypes to '{}' directory.", saved_count, output_dir);
+    } catch (const std::exception& e) {
+        spdlog::error("An exception occurred while saving initial phenotypes: {}", e.what());
+    }
+}
+
+std::string EvolutionController::generateTestPhenotype(uint32_t width, uint32_t height) {
+    spdlog::debug("Generating a {}x{} test phenotype with random pixels.", width, height);
+    try {
+        // Create a 3-channel (color) image of the specified size.
+        cv::Mat image(static_cast<int>(height), static_cast<int>(width), CV_8UC3);
+
+        // Fill the image with uniformly distributed random pixel values.
+        cv::randu(image, cv::Scalar(0, 0, 0), cv::Scalar(255, 255, 255));
+
+        const std::string filepath = "test_phenotype_random_pixels.png";
+        if (cv::imwrite(filepath, image)) {
+            spdlog::info("Successfully saved test phenotype to '{}'", filepath);
+            return filepath;
+        }
+        spdlog::error("Failed to write test phenotype image to '{}'", filepath);
+    } catch (const std::exception& e) {
+        spdlog::error("Exception while generating test phenotype: {}", e.what());
+    }
+    return "";
 }
 
 } // namespace evosim

@@ -16,7 +16,7 @@ namespace evosim {
 std::atomic<uint64_t> Organism::next_id_{1};
 
 Organism::Organism(const BytecodeVM& vm, uint32_t bytecode_size, uint64_t parent_id)
-    : bytecode_(vm.generateRandomBytecode(bytecode_size)),
+    : bytecode_(generatePrimordialBytecode(bytecode_size)),
       stats_(next_id_++),
       phenotype_(vm.execute(bytecode_))
 {
@@ -164,6 +164,56 @@ bool Organism::deserialize(const std::string& data, const BytecodeVM& vm) {
         spdlog::error("Failed to deserialize organism: {}", e.what());
         return false;
     }
+}
+
+Organism::Bytecode Organism::generatePrimordialBytecode(uint32_t size) {
+    // This function creates a "primordial soup" that is more likely to produce
+    // interesting (i.e., non-black) phenotypes from the start.
+    
+    Bytecode code(size);
+    static thread_local std::mt19937 rng(std::random_device{}());
+
+    // 1. Fill with completely random bytes first to provide evolutionary raw material.
+    std::uniform_int_distribution<uint8_t> dist_byte(0, 255);
+    for (uint8_t& byte : code) {
+        byte = dist_byte(rng);
+    }
+
+    // 2. "Sprinkle" in known useful instruction sequences to guarantee color and drawing.
+    std::uniform_int_distribution<uint8_t> dist_color(50, 255); // Avoid dark colors
+    std::uniform_int_distribution<uint8_t> dist_pos(32, 224);   // Avoid image edges
+    std::uniform_int_distribution<uint8_t> dist_size(16, 64);
+    std::uniform_int_distribution<size_t> dist_loc(0, size > 1 ? size - 1 : 0);
+
+    // Inject a "set color" sequence at a random location.
+    // Sequence: PUSH R, SET_COLOR_R, PUSH G, SET_COLOR_G, PUSH B, SET_COLOR_B (9 bytes)
+    if (size >= 9) {
+        size_t loc = dist_loc(rng) % (size - 8);
+        code[loc++] = static_cast<uint8_t>(BytecodeVM::Opcode::PUSH);
+        code[loc++] = dist_color(rng); // R
+        code[loc++] = static_cast<uint8_t>(BytecodeVM::Opcode::SET_COLOR_R);
+        code[loc++] = static_cast<uint8_t>(BytecodeVM::Opcode::PUSH);
+        code[loc++] = dist_color(rng); // G
+        code[loc++] = static_cast<uint8_t>(BytecodeVM::Opcode::SET_COLOR_G);
+        code[loc++] = static_cast<uint8_t>(BytecodeVM::Opcode::PUSH);
+        code[loc++] = dist_color(rng); // B
+        code[loc]   = static_cast<uint8_t>(BytecodeVM::Opcode::SET_COLOR_B);
+    }
+
+    // Inject a "draw circle" sequence at another random location.
+    // Sequence: SET_X, X, SET_Y, Y, PUSH, Radius, DRAW_CIRCLE (7 bytes)
+    if (size >= 7) {
+        size_t loc = dist_loc(rng) % (size - 6);
+        code[loc++] = static_cast<uint8_t>(BytecodeVM::Opcode::SET_X);
+        code[loc++] = dist_pos(rng);  // X
+        code[loc++] = static_cast<uint8_t>(BytecodeVM::Opcode::SET_Y);
+        code[loc++] = dist_pos(rng);  // Y
+        code[loc++] = static_cast<uint8_t>(BytecodeVM::Opcode::PUSH);
+        code[loc++] = dist_size(rng); // Radius
+        code[loc]   = static_cast<uint8_t>(BytecodeVM::Opcode::DRAW_CIRCLE);
+    }
+
+    return code;
 }
 
 uint32_t Organism::applyMutations(Bytecode& bytecode, double mutation_rate, uint32_t max_mutations) const {

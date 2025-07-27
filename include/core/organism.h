@@ -149,6 +149,14 @@ private:
     static std::atomic<uint64_t> next_id_;  ///< Next available organism ID
 
     /**
+     * @brief Generates a "primed" bytecode with color and drawing instructions.
+     * This ensures the primordial soup is visually diverse and not just black.
+     * @param size The total size of the bytecode to generate.
+     * @return A vector of bytes representing the new genome.
+     */
+    static Bytecode generatePrimordialBytecode(uint32_t size);
+
+    /**
      * @brief Apply random mutations to bytecode
      * @param bytecode Bytecode to mutate
      * @param mutation_rate Mutation probability per byte

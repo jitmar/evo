@@ -30,6 +30,7 @@ public:
         bool enable_colors;
         bool enable_interactive;
         int server_port = 9090; ///< Port for the daemon to listen on.
+        uint32_t save_initial_phenotypes = 0;
     };
 
     /**
@@ -85,6 +86,10 @@ private:
      * @param socket The Boost.Asio socket for the connected client.
      */
     void handleClientConnection(boost::asio::ip::tcp::socket socket);
+
+    void saveInitialPhenotypes(uint32_t count);
+
+    std::string generateTestPhenotype(uint32_t width, uint32_t height);
 
     Config config_;
     std::unique_ptr<EvolutionEngine> engine_;

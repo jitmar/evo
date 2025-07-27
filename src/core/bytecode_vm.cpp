@@ -96,7 +96,6 @@ bool BytecodeVM::validateBytecode(const Bytecode& bytecode) const {
             case Opcode::STORE:
             case Opcode::SET_X:
             case Opcode::SET_Y:
-            case Opcode::SET_COLOR:
                 if (i + 1 >= bytecode.size()) {
                     return false; // Missing operand
                 }
@@ -197,13 +196,9 @@ std::string BytecodeVM::disassemble(const Bytecode& bytecode) const {
                     i++;
                 }
                 break;
-            case Opcode::SET_COLOR: 
-                oss << "SET_COLOR";
-                if (i + 1 < bytecode.size()) {
-                    oss << " " << static_cast<int>(bytecode[i + 1]);
-                    i++;
-                }
-                break;
+            case Opcode::SET_COLOR_R: oss << "SET_COLOR_R"; break;
+            case Opcode::SET_COLOR_G: oss << "SET_COLOR_G"; break;
+            case Opcode::SET_COLOR_B: oss << "SET_COLOR_B"; break;
             case Opcode::RANDOM: oss << "RANDOM"; break;
             case Opcode::DUP: oss << "DUP"; break;
             case Opcode::SWAP: oss << "SWAP"; break;
@@ -452,11 +447,41 @@ bool BytecodeVM::executeInstruction(Opcode opcode, uint8_t operand) const {
             state_.pc += 2;
             return true;
             
-        case Opcode::SET_COLOR:
-            state_.color = operand;
-            state_.pc += 2;
+        case Opcode::SET_COLOR_R: {
+            uint8_t color_value;
+            if (!popStack(color_value)) {
+                last_stats_.error_message = "Stack underflow";
+                return false;
+            }
+            state_.color_r = color_value;
+            state_.pc++;
+            last_stats_.stack_operations++;
             return true;
-            
+        }
+
+        case Opcode::SET_COLOR_G: {
+            uint8_t color_value;
+            if (!popStack(color_value)) {
+                last_stats_.error_message = "Stack underflow";
+                return false;
+            }
+            state_.color_g = color_value;
+            state_.pc++;
+            last_stats_.stack_operations++;
+            return true;
+        }
+
+        case Opcode::SET_COLOR_B: {
+            uint8_t color_value;
+            if (!popStack(color_value)) {
+                last_stats_.error_message = "Stack underflow";
+                return false;
+            }
+            state_.color_b = color_value;
+            state_.pc++;
+            last_stats_.stack_operations++;
+            return true;
+        }
         case Opcode::RANDOM:
             if (!pushStack(static_cast<uint8_t>(rng_() % 256))) {
                 last_stats_.error_message = "Stack overflow";
@@ -505,6 +530,11 @@ bool BytecodeVM::executeInstruction(Opcode opcode, uint8_t operand) const {
             state_.pc++;
             last_stats_.stack_operations++;
             return true;
+
+        case Opcode::DRAW_CIRCLE:
+            drawCircle();
+            state_.pc++;
+            return true;
             
         case Opcode::HALT:
             state_.running = false;
@@ -544,10 +574,29 @@ bool BytecodeVM::peekStack(uint8_t& value) const {
 void BytecodeVM::drawPixel() const {
     if (isInBounds(state_.x, state_.y)) {
         cv::Vec3b& pixel = canvas_.at<cv::Vec3b>(static_cast<int>(state_.y), static_cast<int>(state_.x));
-        pixel[0] = state_.color; // Blue
-        pixel[1] = state_.color; // Green
-        pixel[2] = state_.color; // Red
+        pixel[0] = state_.color_b; // Blue
+        pixel[1] = state_.color_g; // Green
+        pixel[2] = state_.color_r; // Red
     }
+}
+
+void BytecodeVM::drawCircle() const {
+    uint8_t radius;
+    if(!popStack(radius)){
+        return;
+    }
+    // Check if x and y are within the valid range for int before casting
+    if (state_.x > INT_MAX || state_.y > INT_MAX) {
+        // Log an error or handle the out-of-range values appropriately
+        last_stats_.error_message = "X or Y coordinate out of range for int conversion";
+        return;
+    }
+
+    cv::Point center(static_cast<int>(state_.x), static_cast<int>(state_.y));
+    if (isInBounds(state_.x, state_.y)) {
+          cv::circle(canvas_, center, radius, cv::Scalar(state_.color_b, state_.color_g, state_.color_r), cv::FILLED, cv::LINE_8);
+    }
+    last_stats_.pixels_drawn++;
 }
 
 bool BytecodeVM::isInBounds(uint32_t x, uint32_t y) const {
@@ -560,7 +609,9 @@ void BytecodeVM::initializeState() const {
     state_.pc = 0;
     state_.x = 0;
     state_.y = 0;
-    state_.color = 0;
+    state_.color_r = 0;
+    state_.color_g = 0;
+    state_.color_b = 0;
     state_.running = true;
     
     canvas_ = cv::Mat::zeros(static_cast<int>(config_.image_height), static_cast<int>(config_.image_width), CV_8UC3);
@@ -610,14 +661,22 @@ BytecodeVM::Bytecode BytecodeVM::generateRandomBytecode(uint32_t size) const {
     // evolution a better starting point.
     int num_seed_instructions = 3;
     for (int i = 0; i < num_seed_instructions; ++i) {
-        // Each drawing sequence is 7 bytes.
-        if (bytecode.size() + 7 > size) break;
+        // Each drawing sequence is now 14 bytes.
+        if (bytecode.size() + 14 > size) break;
         bytecode.push_back(static_cast<uint8_t>(Opcode::SET_X));
         bytecode.push_back(rand_x(rng_));
         bytecode.push_back(static_cast<uint8_t>(Opcode::SET_Y));
         bytecode.push_back(rand_y(rng_));
-        bytecode.push_back(static_cast<uint8_t>(Opcode::SET_COLOR));
+        // Push R, G, B values and set them
+        bytecode.push_back(static_cast<uint8_t>(Opcode::PUSH));
         bytecode.push_back(rand_val(rng_));
+        bytecode.push_back(static_cast<uint8_t>(Opcode::SET_COLOR_R));
+        bytecode.push_back(static_cast<uint8_t>(Opcode::PUSH));
+        bytecode.push_back(rand_val(rng_));
+        bytecode.push_back(static_cast<uint8_t>(Opcode::SET_COLOR_G));
+        bytecode.push_back(static_cast<uint8_t>(Opcode::PUSH));
+        bytecode.push_back(rand_val(rng_));
+        bytecode.push_back(static_cast<uint8_t>(Opcode::SET_COLOR_B));
         bytecode.push_back(static_cast<uint8_t>(Opcode::DRAW_PIXEL));
     }
 

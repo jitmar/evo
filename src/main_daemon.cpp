@@ -49,7 +49,8 @@ bool parseArguments(int argc, char* argv[], po::variables_map& vm, po::options_d
         ("config,c", po::value<std::string>(), "Configuration file (e.g., evosim.yaml)")
         ("log-level,l", po::value<std::string>()->default_value("info"), "Log level (trace, debug, info, etc.)")
         ("log-file", po::value<std::string>(), "Log file path")
-        ("seed", po::value<uint64_t>(), "Random seed");
+        ("seed", po::value<uint64_t>(), "Random seed")
+        ("save-initial-phenotypes", po::value<uint32_t>()->default_value(0), "Save N phenotypes from the first generation for inspection.");
 
     try {
         po::store(po::parse_command_line(argc, argv, desc), vm);
@@ -132,6 +133,7 @@ int main(int argc, char* argv[]) {
 
         evosim::EvolutionController::Config controller_config;
         controller_config.config_file = config_file;
+        controller_config.save_initial_phenotypes = vm["save-initial-phenotypes"].as<uint32_t>();
 
         auto env_config = config_manager.getEnvironmentConfig();
         auto engine_config = config_manager.getEvolutionEngineConfig();

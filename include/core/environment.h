@@ -211,9 +211,10 @@ public:
 
     /**
      * @brief Generate new organisms through reproduction
+     * @param reproduction_pool A pre-sorted list of organisms eligible to be parents.
      * @return Number of new organisms created
      */
-    uint32_t performReproduction();
+    uint32_t performReproduction(const std::vector<OrganismPtr>& reproduction_pool);
 
     /**
      * @brief Apply environmental pressures

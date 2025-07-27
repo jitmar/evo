@@ -29,7 +29,7 @@ public:
         std::vector<uint8_t> memory;    ///< Memory space
         uint32_t pc;                    ///< Program counter
         uint32_t x, y;                  ///< Current drawing position
-        uint8_t color;                  ///< Current drawing color
+        uint8_t color_r, color_g, color_b; ///< Current drawing color channels
         bool running;                   ///< VM running state
     };
 
@@ -73,12 +73,15 @@ public:
         DRAW_PIXEL = 0x13,  ///< Draw pixel at current position
         SET_X = 0x14,       ///< Set X coordinate
         SET_Y = 0x15,       ///< Set Y coordinate
-        SET_COLOR = 0x16,   ///< Set drawing color
-        RANDOM = 0x17,      ///< Push random value to stack
-        DUP = 0x18,         ///< Duplicate top stack value
-        SWAP = 0x19,        ///< Swap top two stack values
-        ROT = 0x1A,         ///< Rotate top three stack values
-        HALT = 0xFF         ///< Halt execution
+        SET_COLOR_R = 0x16, ///< Set red color channel from stack
+        SET_COLOR_G = 0x17, ///< Set green color channel from stack
+        SET_COLOR_B = 0x18, ///< Set blue color channel from stack
+        RANDOM = 0x19,      ///< Push random value to stack
+        DUP = 0x1A,         ///< Duplicate top stack value
+        SWAP = 0x1B,        ///< Swap top two stack values
+        ROT = 0x1C,         ///< Rotate top three stack values
+        DRAW_CIRCLE = 0x1D, ///< Draw circle at current position
+        HALT = 0xFF,        ///< Halt execution
     };
 
     /**
@@ -206,6 +209,8 @@ private:
      * @brief Draw pixel at current position
      */
     void drawPixel() const;
+
+    void drawCircle() const;
 
     /**
      * @brief Check if coordinates are within bounds

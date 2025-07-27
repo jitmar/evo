@@ -95,9 +95,16 @@ bool EvolutionEngine::stop() {
         should_stop_ = true;
         cv_.notify_all(); // Ensure the evolution thread wakes up if paused
     }
-    if (evolution_thread_.joinable()) {
+
+    // --- Prevent self-join deadlock ---
+    // If stop() is called from the evolution thread itself, we must not join it.
+    // The thread will exit its loop and terminate naturally.
+    if (evolution_thread_.joinable() && std::this_thread::get_id() != evolution_thread_.get_id()) {
         evolution_thread_.join();
     }
+
+    // The thread has now stopped (or will stop on its own).
+    // The thread that called stop() is responsible for the final state cleanup.
     {
         std::lock_guard<std::recursive_mutex> lock(mutex_);
         running_ = false;
@@ -344,12 +351,8 @@ void EvolutionEngine::evolutionLoop() {
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    // Set stats_.is_running to false before exiting thread
-    {
-        std::lock_guard<std::recursive_mutex> lock(mutex_);
-        stats_.is_running = false;
-        stats_.is_paused = false;
-    }
+    // The stop() method is now responsible for final state cleanup after joining
+    // the thread, which prevents race conditions and clarifies ownership.
 }
 
 void EvolutionEngine::emitEvent(const Event& event) {
