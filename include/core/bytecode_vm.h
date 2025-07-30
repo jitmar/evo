@@ -3,9 +3,11 @@
 #include <vector>
 #include <memory>
 #include <random>
+#include <string>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/highgui.hpp>
+#include "core/opcodes.h"
 #include "nlohmann/json.hpp"
 
 namespace evosim {
@@ -47,41 +49,13 @@ public:
                    stack_size(256), max_instructions(10000) {}
     };
 
-    /**
-     * @brief Bytecode instruction set
-     */
-    enum class Opcode : uint8_t {
-        NOP = 0x00,         ///< No operation
-        PUSH = 0x01,        ///< Push value to stack
-        POP = 0x02,         ///< Pop value from stack
-        ADD = 0x03,         ///< Add top two stack values
-        SUB = 0x04,         ///< Subtract top two stack values
-        MUL = 0x05,         ///< Multiply top two stack values
-        DIV = 0x06,         ///< Divide top two stack values
-        MOD = 0x07,         ///< Modulo of top two stack values
-        AND = 0x08,         ///< Bitwise AND of top two stack values
-        OR = 0x09,          ///< Bitwise OR of top two stack values
-        XOR = 0x0A,         ///< Bitwise XOR of top two stack values
-        NOT = 0x0B,         ///< Bitwise NOT of top value
-        JMP = 0x0C,         ///< Unconditional jump
-        JZ = 0x0D,          ///< Jump if zero
-        JNZ = 0x0E,         ///< Jump if not zero
-        CALL = 0x0F,        ///< Call subroutine
-        RET = 0x10,         ///< Return from subroutine
-        LOAD = 0x11,        ///< Load from memory
-        STORE = 0x12,       ///< Store to memory
-        DRAW_PIXEL = 0x13,  ///< Draw pixel at current position
-        SET_X = 0x14,       ///< Set X coordinate
-        SET_Y = 0x15,       ///< Set Y coordinate
-        SET_COLOR_R = 0x16, ///< Set red color channel from stack
-        SET_COLOR_G = 0x17, ///< Set green color channel from stack
-        SET_COLOR_B = 0x18, ///< Set blue color channel from stack
-        RANDOM = 0x19,      ///< Push random value to stack
-        DUP = 0x1A,         ///< Duplicate top stack value
-        SWAP = 0x1B,        ///< Swap top two stack values
-        ROT = 0x1C,         ///< Rotate top three stack values
-        DRAW_CIRCLE = 0x1D, ///< Draw circle at current position
-        HALT = 0xFF,        ///< Halt execution
+    struct ExecutionStats {
+        uint32_t instructions_executed;
+        uint32_t pixels_drawn;
+        uint32_t stack_operations;
+        uint32_t memory_operations;
+        bool halted_normally;
+        std::string error_message;
     };
 
     /**
@@ -109,15 +83,6 @@ public:
      * @return Generated image
      */
     Image execute(const Bytecode& bytecode, const VMState& initial_state) const;
-
-    struct ExecutionStats {
-        uint32_t instructions_executed;
-        uint32_t pixels_drawn;
-        uint32_t stack_operations;
-        uint32_t memory_operations;
-        bool halted_normally;
-        std::string error_message;
-    };
 
     /**
      * @brief Get last execution statistics.
@@ -184,6 +149,23 @@ private:
      */
     bool executeInstruction(Opcode opcode, uint8_t operand = 0) const;
 
+    template <typename Operation>
+    bool executeBinaryOp(Operation op, const char* error_on_zero = nullptr) const;
+
+    template <typename Operation>
+    bool executeUnaryOp(Operation op) const;
+
+    /**
+     * @brief Helper to set a color channel from the stack.
+     * @param color_channel The color channel member to modify.
+     */
+    bool executeSetColor(uint8_t& color_channel) const;
+
+    /**
+     * @brief The main execution loop of the VM.
+     */
+    void executionLoop() const;
+
     /**
      * @brief Push value to stack
      * @param value Value to push
@@ -210,7 +192,28 @@ private:
      */
     void drawPixel() const;
 
-    void drawCircle() const;
+    /**
+     * @brief Draw a circle at the current position with a given radius.
+     * @param radius The radius of the circle.
+     */
+    void drawCircle(uint8_t radius) const;
+
+    /**
+     * @brief Draw a rectangle at the current position with a given width and height.
+     * @param width The width of the rectangle.
+     * @param height The height of the rectangle.
+     */
+    void drawRectangle(uint8_t width, uint8_t height) const;
+
+    /**
+     * @brief Draws a line between two points.
+     */
+    void drawLine(int x1, int y1, int x2, int y2) const;
+
+    /**
+     * @brief Draws a quadratic Bezier curve.
+     */
+    void drawQuadraticBezier(int x0, int y0, int x1, int y1, int x2, int y2) const;
 
     /**
      * @brief Check if coordinates are within bounds

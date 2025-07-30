@@ -4,6 +4,8 @@
 #include <sstream>
 #include <iomanip>
 #include "nlohmann/json.hpp"
+#include "spdlog/spdlog.h"
+#include "core/bytecode_generator.h"
 
 namespace evosim {
 
@@ -19,22 +21,7 @@ BytecodeVM::Image BytecodeVM::execute(const Bytecode& bytecode) const {
     // Copy bytecode to memory
     size_t copy_size = std::min(bytecode.size(), static_cast<size_t>(config_.memory_size));
     std::copy(bytecode.begin(), bytecode.begin() + static_cast<ptrdiff_t>(copy_size), state_.memory.begin());
-    
-    // Execute bytecode
-    while (state_.running && state_.pc < state_.memory.size() && 
-           last_stats_.instructions_executed < config_.max_instructions) {
-        
-        uint8_t opcode = state_.memory[state_.pc];
-        uint8_t operand = (state_.pc + 1 < state_.memory.size()) ? state_.memory[state_.pc + 1] : 0;
-        
-        if (!executeInstruction(static_cast<Opcode>(opcode), operand)) {
-            break;
-        }
-        
-        last_stats_.instructions_executed++;
-    }
-    
-    last_stats_.halted_normally = !state_.running;
+    executionLoop();
     return canvas_.clone();
 }
 
@@ -42,26 +29,12 @@ BytecodeVM::Image BytecodeVM::execute(const Bytecode& bytecode, const VMState& i
     state_ = initial_state;
     canvas_ = cv::Mat::zeros(static_cast<int>(config_.image_height), static_cast<int>(config_.image_width), CV_8UC3);
     resetStats();
+    state_.running = true; // Ensure VM is marked as running
     
     // Copy bytecode to memory
     size_t copy_size = std::min(bytecode.size(), static_cast<size_t>(config_.memory_size));
     std::copy(bytecode.begin(), bytecode.begin() + static_cast<ptrdiff_t>(copy_size), state_.memory.begin());
-    
-    // Execute bytecode
-    while (state_.running && state_.pc < state_.memory.size() && 
-           last_stats_.instructions_executed < config_.max_instructions) {
-        
-        uint8_t opcode = state_.memory[state_.pc];
-        uint8_t operand = (state_.pc + 1 < state_.memory.size()) ? state_.memory[state_.pc + 1] : 0;
-        
-        if (!executeInstruction(static_cast<Opcode>(opcode), operand)) {
-            break;
-        }
-        
-        last_stats_.instructions_executed++;
-    }
-    
-    last_stats_.halted_normally = !state_.running;
+    executionLoop();
     return canvas_.clone();
 }
 
@@ -70,40 +43,26 @@ void BytecodeVM::reset() const {
     resetStats();
 }
 
-
-
 bool BytecodeVM::validateBytecode(const Bytecode& bytecode) const {
     if (bytecode.empty()) {
         return false;
     }
     
-    for (size_t i = 0; i < bytecode.size(); ++i) {
-        uint8_t opcode = bytecode[i];
-        
-        // Check if opcode is valid
-        if (opcode > static_cast<uint8_t>(Opcode::HALT)) {
-            return false;
+    for (size_t i = 0; i < bytecode.size(); ) {
+        auto opcode = static_cast<Opcode>(bytecode[i]);
+        int operand_size = evosim::getOperandSize(opcode);
+
+        if (operand_size == -1) {
+            spdlog::warn("Validation failed: Unknown opcode 0x{:02x} at address {}", static_cast<int>(opcode), i);
+            return false; // Unknown opcode
         }
-        
-        // Check for operand requirements
-        switch (static_cast<Opcode>(opcode)) {
-            case Opcode::PUSH:
-            case Opcode::JMP:
-            case Opcode::JZ:
-            case Opcode::JNZ:
-            case Opcode::CALL:
-            case Opcode::LOAD:
-            case Opcode::STORE:
-            case Opcode::SET_X:
-            case Opcode::SET_Y:
-                if (i + 1 >= bytecode.size()) {
-                    return false; // Missing operand
-                }
-                i++; // Skip operand
-                break;
-            default:
-                break;
+
+        // Check if the instruction's operand would read past the end of the bytecode
+        if (i + static_cast<size_t>(operand_size) >= bytecode.size()) {
+            spdlog::warn("Validation failed: Incomplete instruction at end of bytecode. Addr: {}, Opcode: 0x{:02x}", i, static_cast<int>(opcode));
+            return false; // Missing operand for the last instruction
         }
+        i += (1 + static_cast<size_t>(operand_size));
     }
     
     return true;
@@ -113,104 +72,121 @@ std::string BytecodeVM::disassemble(const Bytecode& bytecode) const {
     std::ostringstream oss;
     oss << "Disassembly:\n";
     
-    for (size_t i = 0; i < bytecode.size(); ++i) {
+    for (size_t i = 0; i < bytecode.size(); ) {
+        auto opcode = static_cast<Opcode>(bytecode[i]);
+        int operand_size = evosim::getOperandSize(opcode);
+
+        // Address
         oss << std::hex << std::setw(4) << std::setfill('0') << i << ": ";
-        oss << std::hex << std::setw(2) << std::setfill('0') 
-            << static_cast<int>(bytecode[i]) << " ";
-        
-        // Disassembly
-        switch (static_cast<Opcode>(bytecode[i])) {
-            case Opcode::NOP: oss << "NOP"; break;
-            case Opcode::PUSH: 
-                oss << "PUSH";
-                if (i + 1 < bytecode.size()) {
-                    oss << " " << static_cast<int>(bytecode[i + 1]);
-                    i++;
-                }
-                break;
-            case Opcode::POP: oss << "POP"; break;
-            case Opcode::ADD: oss << "ADD"; break;
-            case Opcode::SUB: oss << "SUB"; break;
-            case Opcode::MUL: oss << "MUL"; break;
-            case Opcode::DIV: oss << "DIV"; break;
-            case Opcode::MOD: oss << "MOD"; break;
-            case Opcode::AND: oss << "AND"; break;
-            case Opcode::OR: oss << "OR"; break;
-            case Opcode::XOR: oss << "XOR"; break;
-            case Opcode::NOT: oss << "NOT"; break;
-            case Opcode::JMP: 
-                oss << "JMP";
-                if (i + 1 < bytecode.size()) {
-                    oss << " " << static_cast<int>(bytecode[i + 1]);
-                    i++;
-                }
-                break;
-            case Opcode::JZ: 
-                oss << "JZ";
-                if (i + 1 < bytecode.size()) {
-                    oss << " " << static_cast<int>(bytecode[i + 1]);
-                    i++;
-                }
-                break;
-            case Opcode::JNZ: 
-                oss << "JNZ";
-                if (i + 1 < bytecode.size()) {
-                    oss << " " << static_cast<int>(bytecode[i + 1]);
-                    i++;
-                }
-                break;
-            case Opcode::CALL: 
-                oss << "CALL";
-                if (i + 1 < bytecode.size()) {
-                    oss << " " << static_cast<int>(bytecode[i + 1]);
-                    i++;
-                }
-                break;
-            case Opcode::RET: oss << "RET"; break;
-            case Opcode::LOAD: 
-                oss << "LOAD";
-                if (i + 1 < bytecode.size()) {
-                    oss << " " << static_cast<int>(bytecode[i + 1]);
-                    i++;
-                }
-                break;
-            case Opcode::STORE: 
-                oss << "STORE";
-                if (i + 1 < bytecode.size()) {
-                    oss << " " << static_cast<int>(bytecode[i + 1]);
-                    i++;
-                }
-                break;
-            case Opcode::DRAW_PIXEL: oss << "DRAW_PIXEL"; break;
-            case Opcode::SET_X: 
-                oss << "SET_X";
-                if (i + 1 < bytecode.size()) {
-                    oss << " " << static_cast<int>(bytecode[i + 1]);
-                    i++;
-                }
-                break;
-            case Opcode::SET_Y: 
-                oss << "SET_Y";
-                if (i + 1 < bytecode.size()) {
-                    oss << " " << static_cast<int>(bytecode[i + 1]);
-                    i++;
-                }
-                break;
-            case Opcode::SET_COLOR_R: oss << "SET_COLOR_R"; break;
-            case Opcode::SET_COLOR_G: oss << "SET_COLOR_G"; break;
-            case Opcode::SET_COLOR_B: oss << "SET_COLOR_B"; break;
-            case Opcode::RANDOM: oss << "RANDOM"; break;
-            case Opcode::DUP: oss << "DUP"; break;
-            case Opcode::SWAP: oss << "SWAP"; break;
-            case Opcode::ROT: oss << "ROT"; break;
-            case Opcode::HALT: oss << "HALT"; break;
-            default: oss << "UNKNOWN"; break;
+
+        // Raw bytes
+        std::string raw_bytes;
+        raw_bytes += (std::ostringstream() << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(bytecode[i])).str();
+        if (operand_size > 0 && i + 1 < bytecode.size()) {
+            raw_bytes += " " + (std::ostringstream() << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(bytecode[i + 1])).str();
         }
-        
+        oss << std::left << std::setw(8) << std::setfill(' ') << raw_bytes;
+
+        // Mnemonic (reusing the existing to_json function from opcodes.h)
+        nlohmann::json j;
+        to_json(j, opcode);
+        oss << std::left << std::setw(14) << std::setfill(' ') << j.get<std::string>();
+
+        // Operand value
+        if (operand_size > 0) {
+            if (i + 1 < bytecode.size()) {
+                oss << static_cast<int>(bytecode[i + 1]);
+            } else {
+                oss << "(missing)";
+            }
+        }
+
         oss << "\n";
+        i += static_cast<size_t>(1 + std::max(0, operand_size));
     }
     
     return oss.str();
+}
+
+template <typename Operation>
+bool BytecodeVM::executeBinaryOp(Operation op, const char* error_on_zero) const {
+    uint8_t b, a;
+    if (!popStack(b) || !popStack(a)) {
+        last_stats_.error_message = "Stack underflow";
+        return false;
+    }
+    if (error_on_zero && b == 0) {
+        last_stats_.error_message = error_on_zero;
+        return false;
+    }
+    if (!pushStack(static_cast<uint8_t>(op(a, b)))) {
+        last_stats_.error_message = "Stack overflow";
+        return false;
+    }
+    // Opcodes using this helper are 1 byte long.
+    state_.pc++;
+    // 2 pops, 1 push
+    last_stats_.stack_operations += 3;
+    return true;
+}
+
+template <typename Operation>
+bool BytecodeVM::executeUnaryOp(Operation op) const {
+    uint8_t a;
+    if (!popStack(a)) {
+        last_stats_.error_message = "Stack underflow";
+        return false;
+    }
+    if (!pushStack(static_cast<uint8_t>(op(a)))) {
+        last_stats_.error_message = "Stack overflow";
+        return false;
+    }
+
+    // Opcodes using this helper are 1 byte long.
+    state_.pc++;
+    // 1 pop, 1 push
+    last_stats_.stack_operations += 2;
+    return true;
+}
+
+bool BytecodeVM::executeSetColor(uint8_t& color_channel) const {
+    uint8_t value;
+    if (!popStack(value)) {
+        last_stats_.error_message = "Stack underflow";
+        return false;
+    }
+    color_channel = value;
+    state_.pc++;
+    last_stats_.stack_operations++;
+    return true;
+}
+
+void BytecodeVM::executionLoop() const {
+    // Execute bytecode
+    while (state_.running) {
+        
+        if (state_.pc >= state_.memory.size()) {
+            spdlog::info("Program counter reached memory size");
+            break;
+        }
+
+        if (last_stats_.instructions_executed >= config_.max_instructions) {
+            spdlog::info("Max instructions reached: {}", config_.max_instructions);
+            break;
+        }
+
+        uint8_t opcode = state_.memory[state_.pc];
+        uint8_t operand = (state_.pc + 1 < state_.memory.size()) ?
+            state_.memory[state_.pc + 1] : 0;
+        
+        if (!executeInstruction(static_cast<Opcode>(opcode), operand)) {
+            break;
+        }
+        
+        last_stats_.instructions_executed++;
+    }
+    
+    last_stats_.halted_normally = !state_.running;
 }
 
 bool BytecodeVM::executeInstruction(Opcode opcode, uint8_t operand) const {
@@ -239,136 +215,38 @@ bool BytecodeVM::executeInstruction(Opcode opcode, uint8_t operand) const {
             return true;
             
         case Opcode::ADD:
-            uint8_t a, b;
-            if (!popStack(b) || !popStack(a)) {
-                last_stats_.error_message = "Stack underflow";
-                return false;
-            }
-            if (!pushStack(a + b)) {
-                last_stats_.error_message = "Stack overflow";
-                return false;
-            }
-            state_.pc++;
-            last_stats_.stack_operations++;
-            return true;
+            return executeBinaryOp([](uint8_t a, uint8_t b) { return a + b; });
             
         case Opcode::SUB:
-            if (!popStack(b) || !popStack(a)) {
-                last_stats_.error_message = "Stack underflow";
-                return false;
-            }
-            if (!pushStack(a - b)) {
-                last_stats_.error_message = "Stack overflow";
-                return false;
-            }
-            state_.pc++;
-            last_stats_.stack_operations++;
-            return true;
+            return executeBinaryOp([](uint8_t a, uint8_t b) { return a - b; });
             
         case Opcode::MUL:
-            if (!popStack(b) || !popStack(a)) {
-                last_stats_.error_message = "Stack underflow";
-                return false;
-            }
-            if (!pushStack(a * b)) {
-                last_stats_.error_message = "Stack overflow";
-                return false;
-            }
-            state_.pc++;
-            last_stats_.stack_operations++;
-            return true;
+            return executeBinaryOp([](uint8_t a, uint8_t b) { return a * b; });
             
         case Opcode::DIV:
-            if (!popStack(b) || !popStack(a)) {
-                last_stats_.error_message = "Stack underflow";
-                return false;
-            }
-            if (b == 0) {
-                last_stats_.error_message = "Division by zero";
-                return false;
-            }
-            if (!pushStack(a / b)) {
-                last_stats_.error_message = "Stack overflow";
-                return false;
-            }
-            state_.pc++;
-            last_stats_.stack_operations++;
-            return true;
+            return executeBinaryOp([](uint8_t a, uint8_t b) { return a / b; }, "Division by zero");
             
         case Opcode::MOD:
-            if (!popStack(b) || !popStack(a)) {
-                last_stats_.error_message = "Stack underflow";
-                return false;
-            }
-            if (b == 0) {
-                last_stats_.error_message = "Modulo by zero";
-                return false;
-            }
-            if (!pushStack(a % b)) {
-                last_stats_.error_message = "Stack overflow";
-                return false;
-            }
-            state_.pc++;
-            last_stats_.stack_operations++;
-            return true;
+            return executeBinaryOp([](uint8_t a, uint8_t b) { return a % b; }, "Modulo by zero");
             
         case Opcode::AND:
-            if (!popStack(b) || !popStack(a)) {
-                last_stats_.error_message = "Stack underflow";
-                return false;
-            }
-            if (!pushStack(a & b)) {
-                last_stats_.error_message = "Stack overflow";
-                return false;
-            }
-            state_.pc++;
-            last_stats_.stack_operations++;
-            return true;
+            return executeBinaryOp([](uint8_t a, uint8_t b) { return a & b; });
             
         case Opcode::OR:
-            if (!popStack(b) || !popStack(a)) {
-                last_stats_.error_message = "Stack underflow";
-                return false;
-            }
-            if (!pushStack(a | b)) {
-                last_stats_.error_message = "Stack overflow";
-                return false;
-            }
-            state_.pc++;
-            last_stats_.stack_operations++;
-            return true;
+            return executeBinaryOp([](uint8_t a, uint8_t b) { return a | b; });
             
         case Opcode::XOR:
-            if (!popStack(b) || !popStack(a)) {
-                last_stats_.error_message = "Stack underflow";
-                return false;
-            }
-            if (!pushStack(a ^ b)) {
-                last_stats_.error_message = "Stack overflow";
-                return false;
-            }
-            state_.pc++;
-            last_stats_.stack_operations++;
-            return true;
+            return executeBinaryOp([](uint8_t a, uint8_t b) { return a ^ b; });
             
         case Opcode::NOT:
-            if (!popStack(a)) {
-                last_stats_.error_message = "Stack underflow";
-                return false;
-            }
-            if (!pushStack(~a)) {
-                last_stats_.error_message = "Stack overflow";
-                return false;
-            }
-            state_.pc++;
-            last_stats_.stack_operations++;
-            return true;
+            return executeUnaryOp([](uint8_t a) { return ~a; });
             
         case Opcode::JMP:
             state_.pc = operand;
             return true;
             
         case Opcode::JZ:
+            uint8_t a;
             if (!peekStack(a)) {
                 last_stats_.error_message = "Stack underflow";
                 return false;
@@ -414,6 +292,7 @@ bool BytecodeVM::executeInstruction(Opcode opcode, uint8_t operand) const {
             }
             state_.pc += 2;
             last_stats_.memory_operations++;
+            last_stats_.stack_operations++; // 1 push
             return true;
             
         case Opcode::STORE:
@@ -429,6 +308,7 @@ bool BytecodeVM::executeInstruction(Opcode opcode, uint8_t operand) const {
             }
             state_.pc += 2;
             last_stats_.memory_operations++;
+            last_stats_.stack_operations++; // 1 pop
             return true;
             
         case Opcode::DRAW_PIXEL:
@@ -448,39 +328,15 @@ bool BytecodeVM::executeInstruction(Opcode opcode, uint8_t operand) const {
             return true;
             
         case Opcode::SET_COLOR_R: {
-            uint8_t color_value;
-            if (!popStack(color_value)) {
-                last_stats_.error_message = "Stack underflow";
-                return false;
-            }
-            state_.color_r = color_value;
-            state_.pc++;
-            last_stats_.stack_operations++;
-            return true;
+            return executeSetColor(state_.color_r);
         }
 
         case Opcode::SET_COLOR_G: {
-            uint8_t color_value;
-            if (!popStack(color_value)) {
-                last_stats_.error_message = "Stack underflow";
-                return false;
-            }
-            state_.color_g = color_value;
-            state_.pc++;
-            last_stats_.stack_operations++;
-            return true;
+            return executeSetColor(state_.color_g);
         }
 
         case Opcode::SET_COLOR_B: {
-            uint8_t color_value;
-            if (!popStack(color_value)) {
-                last_stats_.error_message = "Stack underflow";
-                return false;
-            }
-            state_.color_b = color_value;
-            state_.pc++;
-            last_stats_.stack_operations++;
-            return true;
+            return executeSetColor(state_.color_b);
         }
         case Opcode::RANDOM:
             if (!pushStack(static_cast<uint8_t>(rng_() % 256))) {
@@ -505,6 +361,7 @@ bool BytecodeVM::executeInstruction(Opcode opcode, uint8_t operand) const {
             return true;
             
         case Opcode::SWAP:
+            uint8_t b;
             if (!popStack(b) || !popStack(a)) {
                 last_stats_.error_message = "Stack underflow";
                 return false;
@@ -514,7 +371,8 @@ bool BytecodeVM::executeInstruction(Opcode opcode, uint8_t operand) const {
                 return false;
             }
             state_.pc++;
-            last_stats_.stack_operations++;
+            // 2 pops, 2 pushes
+            last_stats_.stack_operations += 4;
             return true;
             
         case Opcode::ROT:
@@ -528,14 +386,82 @@ bool BytecodeVM::executeInstruction(Opcode opcode, uint8_t operand) const {
                 return false;
             }
             state_.pc++;
-            last_stats_.stack_operations++;
+            // 3 pops, 3 pushes
+            last_stats_.stack_operations += 6;
             return true;
 
         case Opcode::DRAW_CIRCLE:
-            drawCircle();
+            uint8_t radius;
+            if (!popStack(radius)) {
+                last_stats_.error_message = "Stack underflow";
+                return false;
+            }
+            drawCircle(radius);
             state_.pc++;
+            // Count as one drawing operation, consistent with DRAW_PIXEL
+            last_stats_.pixels_drawn++;
+            // 1 pop
+            last_stats_.stack_operations++;
             return true;
             
+        case Opcode::DRAW_RECTANGLE:
+            uint8_t height, width;
+            if (!popStack(height) || !popStack(width)) {
+                last_stats_.error_message = "Stack underflow";
+                return false;
+            }
+            drawRectangle(width, height);
+            state_.pc++;
+            // Consistent with other draw ops
+            last_stats_.pixels_drawn++;
+            // 2 pops
+            last_stats_.stack_operations += 2;
+            return true;
+
+        case Opcode::DRAW_LINE: {
+            uint8_t y2, x2;
+            if (!popStack(y2) || !popStack(x2)) {
+                last_stats_.error_message = "Stack underflow for DRAW_LINE";
+                return false;
+            }
+            drawLine(static_cast<int>(state_.x), static_cast<int>(state_.y), x2, y2);
+            state_.pc++;
+            last_stats_.pixels_drawn++;
+            last_stats_.stack_operations += 2;
+            return true;
+        }
+
+        case Opcode::DRAW_BEZIER_CURVE: {
+            uint8_t ey, ex, cy, cx; // End point (ex, ey), Control point (cx, cy)
+            if (!popStack(ey) || !popStack(ex) || !popStack(cy) || !popStack(cx)) {
+                last_stats_.error_message = "Stack underflow for DRAW_BEZIER_CURVE";
+                return false;
+            }
+            // The curve starts at the current VM position (state_.x, state_.y)
+            drawQuadraticBezier(static_cast<int>(state_.x), static_cast<int>(state_.y), cx, cy, ex, ey);
+            state_.pc++;
+            last_stats_.pixels_drawn++;
+            last_stats_.stack_operations += 4;
+            return true;
+        }
+
+        case Opcode::DRAW_TRIANGLE: {
+            uint8_t y3, x3, y2, x2, y1, x1;
+            if (!popStack(y3) || !popStack(x3) || !popStack(y2) || !popStack(x2) || !popStack(y1) || !popStack(x1)) {
+                last_stats_.error_message = "Stack underflow for DRAW_TRIANGLE";
+                return false;
+            }
+
+            drawLine(x1, y1, x2, y2);
+            drawLine(x2, y2, x3, y3);
+            drawLine(x3, y3, x1, y1);
+
+            state_.pc++;
+            last_stats_.pixels_drawn++;
+            last_stats_.stack_operations += 6;
+            return true;
+        }
+
         case Opcode::HALT:
             state_.running = false;
             return false;
@@ -580,11 +506,7 @@ void BytecodeVM::drawPixel() const {
     }
 }
 
-void BytecodeVM::drawCircle() const {
-    uint8_t radius;
-    if(!popStack(radius)){
-        return;
-    }
+void BytecodeVM::drawCircle(uint8_t radius) const {
     // Check if x and y are within the valid range for int before casting
     if (state_.x > INT_MAX || state_.y > INT_MAX) {
         // Log an error or handle the out-of-range values appropriately
@@ -596,7 +518,85 @@ void BytecodeVM::drawCircle() const {
     if (isInBounds(state_.x, state_.y)) {
           cv::circle(canvas_, center, radius, cv::Scalar(state_.color_b, state_.color_g, state_.color_r), cv::FILLED, cv::LINE_8);
     }
-    last_stats_.pixels_drawn++;
+}
+
+void BytecodeVM::drawRectangle(uint8_t width, uint8_t height) const {
+    if (state_.x > INT_MAX || state_.y > INT_MAX) {
+        last_stats_.error_message = "X or Y coordinate out of range for int conversion";
+        return;
+    }
+
+    // Draw the four sides of the rectangle from the current (x, y)
+    int x_start = static_cast<int>(state_.x);
+    int y_start = static_cast<int>(state_.y);
+    int x_end = x_start + width;
+    int y_end = y_start + height;
+
+    drawLine(x_start, y_start, x_end, y_start); // Top
+    drawLine(x_start, y_end, x_end, y_end);     // Bottom
+    drawLine(x_start, y_start, x_start, y_end); // Left
+    drawLine(x_end, y_start, x_end, y_end);     // Right
+}
+
+void BytecodeVM::drawLine(int x1, int y1, int x2, int y2) const {
+    // Bresenham's line algorithm for integer-only arithmetic.
+    const int dx = std::abs(x2 - x1);
+    const int dy = -std::abs(y2 - y1);
+    const int sx = (x1 < x2) ? 1 : -1;
+    const int sy = (y1 < y2) ? 1 : -1;
+    int err = dx + dy;
+
+    while (true) {
+        // Ensure coordinates are non-negative before casting to unsigned for bounds check.
+        if (x1 >= 0 && y1 >= 0 && isInBounds(static_cast<uint32_t>(x1), static_cast<uint32_t>(y1))) {
+            cv::Vec3b& pixel = canvas_.at<cv::Vec3b>(y1, x1);
+            pixel[0] = state_.color_b;
+            pixel[1] = state_.color_g;
+            pixel[2] = state_.color_r;
+        }
+        if (x1 == x2 && y1 == y2) {
+            break;
+        }
+        int e2 = 2 * err;
+        if (e2 >= dy) {
+            err += dy;
+            x1 += sx;
+        }
+        if (e2 <= dx) {
+            err += dx;
+            y1 += sy;
+        }
+    }
+}
+
+void BytecodeVM::drawQuadraticBezier(int x0, int y0, int x1, int y1, int x2, int y2) const {
+    // Draw the curve by interpolating points and connecting them with short lines
+    // to ensure a continuous, gap-free curve.
+    const int steps = 30; // More steps result in a smoother curve.
+    int prev_x = x0;
+    int prev_y = y0;
+
+    for (int i = 1; i <= steps; ++i) {
+        const float t = static_cast<float>(i) / steps;
+        const float u = 1.0f - t;
+
+        // Quadratic Bezier formula: B(t) = (1-t)^2*P0 + 2(1-t)t*P1 + t^2*P2
+        const int x = static_cast<int>(std::round(
+            u * u * static_cast<float>(x0) +
+            2.0f * u * t * static_cast<float>(x1) +
+            t * t * static_cast<float>(x2)));
+        const int y = static_cast<int>(std::round(
+            u * u * static_cast<float>(y0) +
+            2.0f * u * t * static_cast<float>(y1) +
+            t * t * static_cast<float>(y2)));
+
+        // Draw a line segment from the previous point to the current one.
+        // This avoids gaps that can appear when just drawing individual pixels.
+        drawLine(prev_x, prev_y, x, y);
+
+        prev_x = x;
+        prev_y = y;
+    }
 }
 
 bool BytecodeVM::isInBounds(uint32_t x, uint32_t y) const {
@@ -640,55 +640,30 @@ BytecodeVM::VMState BytecodeVM::getLastState() const {
 }
 
 BytecodeVM::Bytecode BytecodeVM::generateRandomBytecode(uint32_t size) const {
-    Bytecode bytecode;
     if (size == 0) {
-        return bytecode;
-    }
-    bytecode.reserve(size);
-
-    // Use the VM's configuration to get valid coordinate ranges.
-    const auto& vm_config = config_;
-    std::uniform_int_distribution<uint8_t> rand_val(0, 255);
-    // Clamp the distribution range to what the SET_X/Y opcodes can handle (0-255).
-    // This prevents overflow if the configured image size is > 256.
-    uint8_t max_x = static_cast<uint8_t>(std::min(255u, vm_config.image_width - 1));
-    uint8_t max_y = static_cast<uint8_t>(std::min(255u, vm_config.image_height - 1));
-    std::uniform_int_distribution<uint8_t> rand_x(0, max_x);
-    std::uniform_int_distribution<uint8_t> rand_y(0, max_y);
-
-    // --- Seed the bytecode with a few valid drawing instructions ---
-    // This ensures the initial organisms are not completely blank and gives
-    // evolution a better starting point.
-    int num_seed_instructions = 3;
-    for (int i = 0; i < num_seed_instructions; ++i) {
-        // Each drawing sequence is now 14 bytes.
-        if (bytecode.size() + 14 > size) break;
-        bytecode.push_back(static_cast<uint8_t>(Opcode::SET_X));
-        bytecode.push_back(rand_x(rng_));
-        bytecode.push_back(static_cast<uint8_t>(Opcode::SET_Y));
-        bytecode.push_back(rand_y(rng_));
-        // Push R, G, B values and set them
-        bytecode.push_back(static_cast<uint8_t>(Opcode::PUSH));
-        bytecode.push_back(rand_val(rng_));
-        bytecode.push_back(static_cast<uint8_t>(Opcode::SET_COLOR_R));
-        bytecode.push_back(static_cast<uint8_t>(Opcode::PUSH));
-        bytecode.push_back(rand_val(rng_));
-        bytecode.push_back(static_cast<uint8_t>(Opcode::SET_COLOR_G));
-        bytecode.push_back(static_cast<uint8_t>(Opcode::PUSH));
-        bytecode.push_back(rand_val(rng_));
-        bytecode.push_back(static_cast<uint8_t>(Opcode::SET_COLOR_B));
-        bytecode.push_back(static_cast<uint8_t>(Opcode::DRAW_PIXEL));
+        return {};
     }
 
-    // --- Fill the rest with semi-random data, avoiding HALT ---
-    // HALT is 0xFF, so we generate numbers up to 254.
-    std::uniform_int_distribution<uint8_t> dist_no_halt(0, 254);
-    while (bytecode.size() < size) {
-        bytecode.push_back(dist_no_halt(rng_));
+    // Delegate the complex generation to the dedicated BytecodeGenerator.
+    // This centralizes the logic for creating meaningful, drawable bytecode.
+    BytecodeGenerator generator(config_.image_width, config_.image_height);
+
+    // Determine a reasonable number of primitives based on the requested size.
+    // A circle primitive is ~12 bytes. We aim for about half the space to be
+    // structured primitives, leaving room for mutations.
+    size_t num_primitives = std::max(1u, size / 25);
+    Bytecode bytecode = generator.generateInitialBytecode(num_primitives);
+
+    // --- Adjust size and terminate ---
+    if (bytecode.size() > size) {
+        // Truncate if too long.
+        bytecode.resize(size);
+    } else {
+        // Pad with NOPs if too short.
+        bytecode.resize(size, static_cast<uint8_t>(Opcode::NOP));
     }
 
-    // --- Ensure the program terminates by placing HALT at the very end ---
-    // This overwrites the last byte.
+    // Ensure the program always terminates.
     bytecode.back() = static_cast<uint8_t>(Opcode::HALT);
 
     return bytecode;

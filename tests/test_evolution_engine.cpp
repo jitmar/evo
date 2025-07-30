@@ -30,7 +30,6 @@ protected:
         // Use a very short generation time for tests to make them fast and reliable.
         test_env_config.generation_time_ms = 20;
         test_env_config.initial_population = 10;
-        test_env_config.initial_bytecode_size = 32;
 
         test_env = std::make_shared<evosim::Environment>(test_env_config);
         engine = std::make_unique<evosim::EvolutionEngine>(test_env);
@@ -49,14 +48,12 @@ protected:
 };
 
 TEST_F(EvolutionEngineTest, Initialization) {
-    test_env->initialize(test_env_config.initial_bytecode_size);
     auto stats = engine->getStats();
     EXPECT_EQ(stats.current_population, test_env_config.initial_population);
     EXPECT_EQ(stats.total_generations, 0);
 }
 
 TEST_F(EvolutionEngineTest, RunGenerationsThreaded) {
-    test_env->initialize(test_env_config.initial_bytecode_size);
     engine->start();
 
     // Wait for at least 2 generations to pass using our reliable helper.
@@ -70,7 +67,6 @@ TEST_F(EvolutionEngineTest, RunGenerationsThreaded) {
 }
 
 TEST_F(EvolutionEngineTest, PauseAndResume) {
-    test_env->initialize(test_env_config.initial_bytecode_size);
     engine->start();
 
     // Wait for at least one generation to pass to have a baseline.
@@ -100,7 +96,6 @@ TEST_F(EvolutionEngineTest, PauseAndResume) {
 }
 
 TEST_F(EvolutionEngineTest, SaveAndLoadState) {
-    test_env->initialize(test_env_config.initial_bytecode_size);
     engine->start();
 
     // Wait for a few generations to pass so we have interesting state to save.

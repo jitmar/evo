@@ -54,14 +54,6 @@ public:
     };
 
     /**
-     * @brief Constructor for creating a new, random organism.
-     * @param vm The BytecodeVM instance to use for generation and execution.
-     * @param bytecode_size The size of the bytecode to generate.
-     * @param parent_id The ID of the parent organism (0 for initial population).
-     */
-    Organism(const BytecodeVM& vm, uint32_t bytecode_size, uint64_t parent_id = 0);
-
-    /**
      * @brief Constructor for creating an organism from existing bytecode.
      *
      * Used for replication and loading from state. It executes the provided
@@ -147,14 +139,6 @@ private:
     mutable std::mutex mutex_;         ///< Thread safety mutex
 
     static std::atomic<uint64_t> next_id_;  ///< Next available organism ID
-
-    /**
-     * @brief Generates a "primed" bytecode with color and drawing instructions.
-     * This ensures the primordial soup is visually diverse and not just black.
-     * @param size The total size of the bytecode to generate.
-     * @return A vector of bytes representing the new genome.
-     */
-    static Bytecode generatePrimordialBytecode(uint32_t size);
 
     /**
      * @brief Apply random mutations to bytecode

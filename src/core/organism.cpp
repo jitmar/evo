@@ -1,4 +1,5 @@
 #include "core/organism.h"
+#include "core/opcodes.h"
 #include <random>
 #include <sstream>
 #include <iomanip>
@@ -14,15 +15,6 @@ namespace evosim {
 
 // Initialize static member
 std::atomic<uint64_t> Organism::next_id_{1};
-
-Organism::Organism(const BytecodeVM& vm, uint32_t bytecode_size, uint64_t parent_id)
-    : bytecode_(generatePrimordialBytecode(bytecode_size)),
-      stats_(next_id_++),
-      phenotype_(vm.execute(bytecode_))
-{
-    stats_.generation = (parent_id == 0) ? 0 : 1;
-    stats_.parent_id = parent_id;
-}
 
 Organism::Organism(Bytecode bytecode, const BytecodeVM& vm, uint64_t parent_id)
     : bytecode_(std::move(bytecode)),
@@ -166,72 +158,79 @@ bool Organism::deserialize(const std::string& data, const BytecodeVM& vm) {
     }
 }
 
-Organism::Bytecode Organism::generatePrimordialBytecode(uint32_t size) {
-    // This function creates a "primordial soup" that is more likely to produce
-    // interesting (i.e., non-black) phenotypes from the start.
-    
-    Bytecode code(size);
-    static thread_local std::mt19937 rng(std::random_device{}());
-
-    // 1. Fill with completely random bytes first to provide evolutionary raw material.
-    std::uniform_int_distribution<uint8_t> dist_byte(0, 255);
-    for (uint8_t& byte : code) {
-        byte = dist_byte(rng);
-    }
-
-    // 2. "Sprinkle" in known useful instruction sequences to guarantee color and drawing.
-    std::uniform_int_distribution<uint8_t> dist_color(50, 255); // Avoid dark colors
-    std::uniform_int_distribution<uint8_t> dist_pos(32, 224);   // Avoid image edges
-    std::uniform_int_distribution<uint8_t> dist_size(16, 64);
-    std::uniform_int_distribution<size_t> dist_loc(0, size > 1 ? size - 1 : 0);
-
-    // Inject a "set color" sequence at a random location.
-    // Sequence: PUSH R, SET_COLOR_R, PUSH G, SET_COLOR_G, PUSH B, SET_COLOR_B (9 bytes)
-    if (size >= 9) {
-        size_t loc = dist_loc(rng) % (size - 8);
-        code[loc++] = static_cast<uint8_t>(BytecodeVM::Opcode::PUSH);
-        code[loc++] = dist_color(rng); // R
-        code[loc++] = static_cast<uint8_t>(BytecodeVM::Opcode::SET_COLOR_R);
-        code[loc++] = static_cast<uint8_t>(BytecodeVM::Opcode::PUSH);
-        code[loc++] = dist_color(rng); // G
-        code[loc++] = static_cast<uint8_t>(BytecodeVM::Opcode::SET_COLOR_G);
-        code[loc++] = static_cast<uint8_t>(BytecodeVM::Opcode::PUSH);
-        code[loc++] = dist_color(rng); // B
-        code[loc]   = static_cast<uint8_t>(BytecodeVM::Opcode::SET_COLOR_B);
-    }
-
-    // Inject a "draw circle" sequence at another random location.
-    // Sequence: SET_X, X, SET_Y, Y, PUSH, Radius, DRAW_CIRCLE (7 bytes)
-    if (size >= 7) {
-        size_t loc = dist_loc(rng) % (size - 6);
-        code[loc++] = static_cast<uint8_t>(BytecodeVM::Opcode::SET_X);
-        code[loc++] = dist_pos(rng);  // X
-        code[loc++] = static_cast<uint8_t>(BytecodeVM::Opcode::SET_Y);
-        code[loc++] = dist_pos(rng);  // Y
-        code[loc++] = static_cast<uint8_t>(BytecodeVM::Opcode::PUSH);
-        code[loc++] = dist_size(rng); // Radius
-        code[loc]   = static_cast<uint8_t>(BytecodeVM::Opcode::DRAW_CIRCLE);
-    }
-
-    return code;
-}
-
 uint32_t Organism::applyMutations(Bytecode& bytecode, double mutation_rate, uint32_t max_mutations) const {
     if (bytecode.empty() || mutation_rate <= 0.0 || max_mutations == 0) {
         return 0;
     }
     
+    // A list of all opcodes that can be used for mutation.
+    // We exclude HALT to prevent mutations from trivially killing the program.
+    static const std::vector<Opcode> all_mutable_opcodes = {
+        Opcode::NOP, Opcode::PUSH, Opcode::POP, Opcode::ADD, Opcode::SUB,
+        Opcode::MUL, Opcode::DIV, Opcode::MOD, Opcode::AND, Opcode::OR,
+        Opcode::XOR, Opcode::NOT, Opcode::JMP, Opcode::JZ, Opcode::JNZ,
+        Opcode::CALL, Opcode::RET, Opcode::LOAD, Opcode::STORE,
+        Opcode::DRAW_PIXEL, Opcode::SET_X, Opcode::SET_Y, Opcode::SET_COLOR_R,
+        Opcode::SET_COLOR_G, Opcode::SET_COLOR_B, Opcode::RANDOM, Opcode::DUP,
+        Opcode::SWAP, Opcode::ROT, Opcode::DRAW_CIRCLE
+    };
+
     static thread_local std::mt19937 rng(std::random_device{}());
-    std::uniform_real_distribution<double> dist(0.0, 1.0);
+    std::uniform_real_distribution<double> chance_dist(0.0, 1.0);
     std::uniform_int_distribution<uint8_t> byte_dist(0, 255);
+    std::uniform_int_distribution<size_t> opcode_dist(0, all_mutable_opcodes.size() - 1);
     
     uint32_t mutations = 0;
     
-    for (size_t i = 0; i < bytecode.size() && mutations < max_mutations; ++i) {
-        if (dist(rng) < mutation_rate) {
-            bytecode[i] = byte_dist(rng);
-            mutations++;
+    // We iterate by instruction, not by byte, to preserve instruction integrity.
+    // We stop before the last byte to protect the final HALT instruction.
+    for (size_t i = 0; i < bytecode.size() - 1 && mutations < max_mutations; ) {
+        Opcode current_op = static_cast<Opcode>(bytecode[i]);
+        int operand_size = getOperandSize(current_op);
+
+        // If opcode is invalid or we're at the end, we can't process a full instruction.
+        if (operand_size == -1 || i + static_cast<size_t>(operand_size) >= bytecode.size()) {
+            i++;
+            continue;
         }
+
+        // Decide if we should mutate this instruction.
+        if (chance_dist(rng) < mutation_rate) {
+            mutations++;
+
+            constexpr double OPERAND_MUTATION_CHANCE = 0.5;
+            bool has_operand = (operand_size > 0);
+            bool mutate_operand = has_operand && (chance_dist(rng) < OPERAND_MUTATION_CHANCE);
+
+            if (mutate_operand) {
+                const auto op = static_cast<Opcode>(bytecode[i]);
+                // --- Smarter Mutation for Jump Instructions ---
+                // To prevent infinite loops, we constrain jump targets to always be forward.
+                // This ensures the program counter always progresses, forming a DAG.
+                if (op == Opcode::JMP || op == Opcode::JZ || op == Opcode::JNZ || op == Opcode::CALL) {
+                    // The new target must be after the current instruction.
+                    size_t current_instruction_end = i + 1 + static_cast<size_t>(operand_size);
+                    // The jump target is a uint8_t, so it's limited to 255.
+                    // We also must not jump past the end of the bytecode (or to the final HALT).
+                    uint8_t min_target = static_cast<uint8_t>(current_instruction_end);
+                    uint8_t max_target = static_cast<uint8_t>(std::min((size_t)255, bytecode.size() - 2));
+
+                    if (min_target <= max_target) {
+                        std::uniform_int_distribution<uint8_t> forward_dist(min_target, max_target);
+                        bytecode[i + 1] = forward_dist(rng);
+                    } else {
+                        // Not enough space for a forward jump. Neutralize the instruction to be safe.
+                        bytecode[i] = static_cast<uint8_t>(Opcode::NOP);
+                    }
+                } else {
+                    // Standard random mutation for other operands.
+                    bytecode[i + 1] = byte_dist(rng);
+                }
+            } else {
+                bytecode[i] = static_cast<uint8_t>(all_mutable_opcodes[opcode_dist(rng)]);
+            }
+        }
+        i += (1 + static_cast<size_t>(operand_size));
     }
     
     return mutations;

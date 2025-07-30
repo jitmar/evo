@@ -9,6 +9,7 @@
 #include <cmath>
 #include "nlohmann/json.hpp"
 #include "spdlog/spdlog.h"
+#include "core/bytecode_generator.h"
 
 namespace evosim {
 
@@ -21,8 +22,7 @@ Environment::Environment(
     , vm_(vm_config)
     , analyzer_(analyzer_config)
     , rng_(std::random_device{}()) {
-    // Pass the configured initial bytecode size from the environment's config.
-    initialize(config_.initial_bytecode_size);
+    initialize();
 }
 
 void Environment::setVMConfig(const BytecodeVM::Config& config) {
@@ -35,19 +35,38 @@ void Environment::setAnalyzerConfig(const SymmetryAnalyzer::Config& config) {
     analyzer_.setConfig(config);
 }
 
-void Environment::initialize(uint32_t bytecode_size) {
+void Environment::initialize() {
     std::lock_guard<std::mutex> lock(mutex_);
     
     population_.clear();
     stats_ = EnvironmentStats{};
     
-    // Generate initial population
-    for (uint32_t i = 0; i < config_.initial_population; ++i) {
-        auto organism = std::make_shared<Organism>(vm_, bytecode_size, 0);
+    auto vm_config = vm_.getConfig();
+    BytecodeGenerator generator(vm_config.image_width, vm_config.image_height);
+
+    // --- Create a guaranteed non-blank organism to seed the population ---
+    // This ensures there is at least one organism with a visible phenotype,
+    // which helps kickstart the evolutionary process.
+    if (config_.initial_population > 0) {
+        BytecodeGenerator::Bytecode seed_bytecode = generator.createNonBlackCirclePrimitive();
+        auto seed_organism = std::make_shared<Organism>(std::move(seed_bytecode), vm_, 0);
+        population_[seed_organism->getStats().id] = seed_organism;
+        stats_.total_organisms_created++;
+    }
+
+    // --- Fill the rest of the population with randomly generated organisms ---
+    std::uniform_int_distribution<size_t> num_primitives_dist(5, 15);
+    uint32_t remaining_population = (config_.initial_population > 0) ? config_.initial_population - 1 : 0;
+
+    for (uint32_t i = 0; i < remaining_population; ++i) {
+        size_t num_primitives = num_primitives_dist(rng_);
+        auto bytecode = generator.generateInitialBytecode(num_primitives);
+        // We use an Organism constructor that accepts pre-made bytecode.
+        auto organism = std::make_shared<Organism>(std::move(bytecode), vm_, 0);
         population_[organism->getStats().id] = organism;
         stats_.total_organisms_created++;
     }
-    
+    spdlog::info("Initialized population with {} organisms, including one guaranteed non-black seed.", config_.initial_population);
     updateStats();
 }
 
@@ -190,12 +209,9 @@ double Environment::evaluateFitness(const OrganismPtr& organism) {
     cv::Scalar mean, stddev;
     cv::meanStdDev(image, mean, stddev);
 
-    // A very low sum of standard deviations across all color channels
-    // indicates a monochrome (single-color) image. We set a small threshold
-    // to account for minor noise. If it's monochrome, it's unfit.
-    const double stddev_sum = stddev[0] + stddev[1] + stddev[2];
-    if (stddev_sum < 1.0) {
-        // This image is effectively blank. Assign zero fitness to escape this local maximum.
+    // An organism that draws nothing (or a single solid color) should have zero fitness.
+    // A monochrome image has a standard deviation sum near zero.
+    if ((stddev[0] + stddev[1] + stddev[2]) < 1.0) {
         return 0.0;
     }
 

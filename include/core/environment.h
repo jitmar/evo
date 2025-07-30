@@ -104,9 +104,8 @@ public:
 
     /**
      * @brief Initialize environment with random organisms
-     * @param bytecode_size Size of initial organism bytecode
      */
-    void initialize(uint32_t bytecode_size = 64);
+    void initialize();
 
     /**
      * @brief Update environment for one generation
@@ -273,13 +272,6 @@ private:
     void apply_predation_();
     void remove_random_organisms_unlocked_(uint32_t count);
     void apply_environmental_pressures_unlocked_();
-
-    /**
-     * @brief Generate random bytecode
-     * @param size Bytecode size
-     * @return Random bytecode
-     */
-    Organism::Bytecode generateRandomBytecode(uint32_t size) const;
 
     /**
      * @brief Calculate fitness-based selection probability

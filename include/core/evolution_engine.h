@@ -220,14 +220,6 @@ public:
      */
     bool exportData(const std::string& filename) const;
 
-    /**
-     * @brief Generates and saves a test phenotype image filled with random pixels.
-     * @param width The width of the image to generate.
-     * @param height The height of the image to generate.
-     * @return The path to the saved file, or an empty string on failure.
-     */
-    std::string generateTestPhenotype(uint32_t width, uint32_t height);
-
 private:
     EnvironmentPtr environment_;        ///< Managed environment
     Config config_;                     ///< Engine configuration

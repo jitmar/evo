@@ -11,6 +11,7 @@
 #include <cstring>      // For memset
 #include <iostream>
 #include <filesystem>   // For creating directories
+#include <fstream>      // For saving bytecode
 #include <sstream>      // For building filenames
 #include <iomanip>      // For std::setprecision
 #include "opencv2/imgcodecs.hpp" // For cv::imwrite
@@ -257,25 +258,55 @@ void EvolutionController::saveInitialPhenotypes(uint32_t count) {
         return;
     }
 
-    // We need a VM to execute bytecode. Get one with the correct configuration from the environment.
+    // We need a VM to execute bytecode. Get one with the correct configuration from the
+    // environment.
     BytecodeVM temp_vm(env->getVMConfig());
-    
+
     const std::string output_dir = "initial_phenotypes";
     try {
         std::filesystem::create_directories(output_dir);
-        
+
         auto population = env->getPopulation(); // This is a map of the initial population
         uint32_t saved_count = 0;
         for (const auto& pair : population) {
             if (saved_count >= count) break;
 
             const auto& org = pair.second;
-            auto image = temp_vm.execute(org->getBytecode());
-            
+            const auto& bytecode = org->getBytecode();
+            spdlog::debug("Generating phenotype for initial organism {}, bytecode size: {}",
+                          org->getStats().id, bytecode.size());
+
+            auto image = temp_vm.execute(bytecode);
+
+            if (image.empty()) {
+                spdlog::warn("VM returned an empty image for organism {}. Skipping.",
+                             org->getStats().id);
+                continue;
+            }
+
+            // Check if the image is all black to help diagnose generation issues.
+            cv::Scalar mean_pixel = cv::mean(image);
+            if (mean_pixel[0] == 0 && mean_pixel[1] == 0 && mean_pixel[2] == 0) {
+                spdlog::warn("Generated image for organism {} is all black. Bytecode might be ineffective.",
+                             org->getStats().id);
+
+                // Also save the bytecode for debugging.
+                std::stringstream bc_ss;
+                bc_ss << output_dir << "/initial_organism_" << org->getStats().id << ".bin";
+                std::string bytecode_filepath = bc_ss.str();
+                std::ofstream ofs(bytecode_filepath, std::ios::binary);
+                if (ofs) {
+                    ofs.write(reinterpret_cast<const char*>(bytecode.data()), static_cast<std::streamsize>(bytecode.size()));
+                    spdlog::info("Saved ineffective bytecode for organism {} to {}", org->getStats().id, bytecode_filepath);
+                } else {
+                    spdlog::warn("Failed to save bytecode for organism {}", org->getStats().id);
+                }
+            }
+
             std::stringstream ss;
             ss << output_dir << "/initial_organism_" << org->getStats().id << ".png";
             std::string filepath = ss.str();
-            
+
             if (cv::imwrite(filepath, image)) {
                 saved_count++;
             } else {
