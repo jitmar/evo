@@ -18,7 +18,8 @@ std::atomic<uint64_t> Organism::next_id_{1};
 
 Organism::Organism(Bytecode bytecode, const BytecodeVM& vm, uint64_t parent_id)
     : bytecode_(std::move(bytecode)),
-      stats_(next_id_++)
+      stats_(next_id_++),
+      rng_(std::random_device{}())
 {
     // Only set fields not already set by Stats(uint64_t id_)
     stats_.generation = (parent_id == 0) ? 0 : 1;
@@ -30,7 +31,8 @@ Organism::Organism(Bytecode bytecode, const BytecodeVM& vm, uint64_t parent_id)
 Organism::Organism(const Organism& other)
     : bytecode_(other.bytecode_),
       stats_(other.stats_),
-      phenotype_(other.phenotype_.clone())
+      phenotype_(other.phenotype_.clone()),
+      rng_(std::random_device{}()) // Each copy gets its own new RNG
 {
     // Copy constructor: assign new unique id, set parent_id to original's id
     stats_.id = next_id_++;
@@ -45,7 +47,8 @@ Organism::Organism(const Organism& other)
 Organism::Organism(Organism&& other) noexcept
     : bytecode_(std::move(other.bytecode_)),
       stats_(std::move(other.stats_)),
-      phenotype_(std::move(other.phenotype_))
+      phenotype_(std::move(other.phenotype_)),
+      rng_(std::move(other.rng_))
 {
     // Move constructor
 }
@@ -74,6 +77,7 @@ void Organism::swap(Organism& other) noexcept
     swap(bytecode_, other.bytecode_);
     swap(stats_, other.stats_);
     swap(phenotype_, other.phenotype_);
+    swap(rng_, other.rng_);
 }
 
 Organism::OrganismPtr Organism::replicate(const BytecodeVM& vm, double mutation_rate, uint32_t max_mutations) const {
@@ -93,6 +97,70 @@ Organism::OrganismPtr Organism::replicate(const BytecodeVM& vm, double mutation_
     stats_.last_replication = Clock::now();
     
     return child;
+}
+
+Organism::OrganismPtr Organism::reproduceWith(const OrganismPtr& other, const BytecodeVM& vm, double mutation_rate, uint32_t max_mutations) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!other) {
+        return nullptr;
+    }
+
+    const auto& bc1 = this->bytecode_;
+    const auto& bc2 = other->getBytecode(); // getBytecode locks its own mutex
+
+    if (bc1.empty() || bc2.empty()) {
+        return nullptr;
+    }
+
+    Bytecode child_bytecode;
+
+    // --- Structure-Aware Crossover ---
+    auto boundaries1 = findUnitBoundaries(bc1);
+    auto boundaries2 = findUnitBoundaries(bc2);
+
+    // We need at least one internal boundary to perform a meaningful swap.
+    if (boundaries1.size() > 1 && boundaries2.size() > 1) {
+        // Choose a random unit boundary from each parent.
+        std::uniform_int_distribution<size_t> dist1(1, boundaries1.size() - 1);
+        std::uniform_int_distribution<size_t> dist2(1, boundaries2.size() - 1);
+
+        size_t crossover_point1 = boundaries1[dist1(rng_)];
+        size_t crossover_point2 = boundaries2[dist2(rng_)];
+
+        // Combine the first part of parent 1 with the second part of parent 2.
+        child_bytecode.reserve(crossover_point1 + (bc2.size() - crossover_point2));
+        child_bytecode.insert(
+            child_bytecode.end(),
+            bc1.begin(),
+            std::next(
+                bc1.begin(),
+                static_cast<std::ptrdiff_t>(crossover_point1)));
+        child_bytecode.insert(
+            child_bytecode.end(),
+            std::next(
+                bc2.begin(),
+                static_cast<std::ptrdiff_t>(crossover_point2)),
+                bc2.end());
+    } else {
+        // Fallback to simple single-point crossover if no units are found.
+        std::uniform_int_distribution<size_t> dist(0, std::min(bc1.size(), bc2.size()));
+        size_t crossover_point = dist(rng_);
+        child_bytecode.insert(
+            child_bytecode.end(),
+            bc1.begin(),
+            std::next(bc1.begin(), static_cast<std::ptrdiff_t>(crossover_point)));
+        child_bytecode.insert(
+            child_bytecode.end(),
+            std::next(bc2.begin(),
+            static_cast<std::ptrdiff_t>(crossover_point)), bc2.end());
+    }
+
+    uint32_t mutations_applied = applyMutations(child_bytecode, mutation_rate, max_mutations);
+
+    auto offspring = std::make_shared<Organism>(std::move(child_bytecode), vm, this->stats_.id);
+    offspring->stats_.mutation_count = mutations_applied;
+    offspring->stats_.generation = this->stats_.generation + 1;
+    return offspring;
 }
 
 const Organism::Bytecode& Organism::getBytecode() const {
@@ -240,6 +308,45 @@ uint8_t Organism::generateRandomByte() const {
     static thread_local std::mt19937 rng(std::random_device{}());
     std::uniform_int_distribution<uint8_t> dist(0, 255);
     return dist(rng);
+}
+
+/**
+ * @brief Finds the boundaries of logical units (primitives) within bytecode.
+ *
+ * This helper function scans the bytecode and identifies the end of each
+ * drawing instruction. These locations are considered boundaries between
+ * logical "genes," allowing for a more intelligent, structure-aware crossover.
+ *
+ * @param bytecode The bytecode to analyze.
+ * @return A vector of indices representing the start of each logical unit.
+ */
+std::vector<size_t> findUnitBoundaries(const Organism::Bytecode& bytecode) {
+    std::vector<size_t> boundaries;
+    boundaries.push_back(0); // The start of the bytecode is always a boundary.
+
+    for (size_t i = 0; i < bytecode.size(); ) {
+        Opcode op = static_cast<Opcode>(bytecode[i]);
+        int operand_size = getOperandSize(op);
+        if (operand_size == -1) { // Invalid opcode, treat as single-byte instruction.
+            i++;
+            continue;
+        }
+
+        size_t instruction_size = 1 + static_cast<size_t>(operand_size);
+
+        switch(op) {
+            case Opcode::DRAW_PIXEL: case Opcode::DRAW_CIRCLE: case Opcode::DRAW_RECTANGLE:
+            case Opcode::DRAW_LINE: case Opcode::DRAW_BEZIER_CURVE: case Opcode::DRAW_TRIANGLE:
+                // The position *after* this drawing instruction is a boundary.
+                if (i + instruction_size < bytecode.size()) {
+                    boundaries.push_back(i + instruction_size);
+                }
+                break;
+            default: break;
+        }
+        i += instruction_size;
+    }
+    return boundaries;
 }
 
 }  // namespace evosim

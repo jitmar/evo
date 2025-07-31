@@ -1,6 +1,9 @@
 #pragma once
 
 #include <cstdint>
+#include <unordered_map>
+#include <utility> // For std::pair
+
 #include "nlohmann/json.hpp" // For JSON serialization
 
 namespace evosim {
@@ -48,6 +51,60 @@ enum class Opcode : uint8_t {
     HALT = 0xFF,        ///< Halt execution
 };
 
+namespace detail {
+
+/**
+ * @brief Provides a single source of truth for opcode metadata.
+ *
+ * This avoids scattering opcode properties (like string representation and
+ * operand size) across multiple switch statements, which improves maintainability.
+ * When a new opcode is added, it only needs to be added to the enum and this map.
+ *
+ * @return A constant reference to a map from Opcode to its metadata.
+ */
+inline const std::unordered_map<Opcode, std::pair<const char*, int>>& get_opcode_metadata() {
+    // Using a static local variable ensures thread-safe, one-time initialization.
+    static const std::unordered_map<Opcode, std::pair<const char*, int>> metadata = {
+        {Opcode::NOP, {"NOP", 0}},
+        {Opcode::PUSH, {"PUSH", 1}},
+        {Opcode::POP, {"POP", 0}},
+        {Opcode::ADD, {"ADD", 0}},
+        {Opcode::SUB, {"SUB", 0}},
+        {Opcode::MUL, {"MUL", 0}},
+        {Opcode::DIV, {"DIV", 0}},
+        {Opcode::MOD, {"MOD", 0}},
+        {Opcode::AND, {"AND", 0}},
+        {Opcode::OR, {"OR", 0}},
+        {Opcode::XOR, {"XOR", 0}},
+        {Opcode::NOT, {"NOT", 0}},
+        {Opcode::JMP, {"JMP", 1}},
+        {Opcode::JZ, {"JZ", 1}},
+        {Opcode::JNZ, {"JNZ", 1}},
+        {Opcode::CALL, {"CALL", 1}},
+        {Opcode::RET, {"RET", 0}},
+        {Opcode::LOAD, {"LOAD", 1}},
+        {Opcode::STORE, {"STORE", 1}},
+        {Opcode::DRAW_PIXEL, {"DRAW_PIXEL", 0}},
+        {Opcode::SET_X, {"SET_X", 1}},
+        {Opcode::SET_Y, {"SET_Y", 1}},
+        {Opcode::SET_COLOR_R, {"SET_COLOR_R", 0}},
+        {Opcode::SET_COLOR_G, {"SET_COLOR_G", 0}},
+        {Opcode::SET_COLOR_B, {"SET_COLOR_B", 0}},
+        {Opcode::RANDOM, {"RANDOM", 0}},
+        {Opcode::DUP, {"DUP", 0}},
+        {Opcode::SWAP, {"SWAP", 0}},
+        {Opcode::ROT, {"ROT", 0}},
+        {Opcode::DRAW_CIRCLE, {"DRAW_CIRCLE", 0}},
+        {Opcode::DRAW_RECTANGLE, {"DRAW_RECTANGLE", 0}},
+        {Opcode::DRAW_LINE, {"DRAW_LINE", 0}},
+        {Opcode::DRAW_BEZIER_CURVE, {"DRAW_BEZIER_CURVE", 0}},
+        {Opcode::DRAW_TRIANGLE, {"DRAW_TRIANGLE", 0}},
+        {Opcode::HALT, {"HALT", 0}}};
+    return metadata;
+}
+
+} // namespace detail
+
 /**
  * @brief Serializes an Opcode to its string representation for JSON.
  *
@@ -59,43 +116,12 @@ enum class Opcode : uint8_t {
  * @param op The Opcode to serialize.
  */
 inline void to_json(nlohmann::json& j, const Opcode& op) {
-    switch (op) {
-        case Opcode::NOP: j = "NOP"; break;
-        case Opcode::PUSH: j = "PUSH"; break;
-        case Opcode::POP: j = "POP"; break;
-        case Opcode::ADD: j = "ADD"; break;
-        case Opcode::SUB: j = "SUB"; break;
-        case Opcode::MUL: j = "MUL"; break;
-        case Opcode::DIV: j = "DIV"; break;
-        case Opcode::MOD: j = "MOD"; break;
-        case Opcode::AND: j = "AND"; break;
-        case Opcode::OR: j = "OR"; break;
-        case Opcode::XOR: j = "XOR"; break;
-        case Opcode::NOT: j = "NOT"; break;
-        case Opcode::JMP: j = "JMP"; break;
-        case Opcode::JZ: j = "JZ"; break;
-        case Opcode::JNZ: j = "JNZ"; break;
-        case Opcode::CALL: j = "CALL"; break;
-        case Opcode::RET: j = "RET"; break;
-        case Opcode::LOAD: j = "LOAD"; break;
-        case Opcode::STORE: j = "STORE"; break;
-        case Opcode::DRAW_PIXEL: j = "DRAW_PIXEL"; break;
-        case Opcode::SET_X: j = "SET_X"; break;
-        case Opcode::SET_Y: j = "SET_Y"; break;
-        case Opcode::SET_COLOR_R: j = "SET_COLOR_R"; break;
-        case Opcode::SET_COLOR_G: j = "SET_COLOR_G"; break;
-        case Opcode::SET_COLOR_B: j = "SET_COLOR_B"; break;
-        case Opcode::RANDOM: j = "RANDOM"; break;
-        case Opcode::DUP: j = "DUP"; break;
-        case Opcode::SWAP: j = "SWAP"; break;
-        case Opcode::ROT: j = "ROT"; break;
-        case Opcode::DRAW_CIRCLE: j = "DRAW_CIRCLE"; break;
-        case Opcode::DRAW_RECTANGLE: j = "DRAW_RECTANGLE"; break;
-        case Opcode::DRAW_LINE: j = "DRAW_LINE"; break;
-        case Opcode::DRAW_BEZIER_CURVE: j = "DRAW_BEZIER_CURVE"; break;
-        case Opcode::DRAW_TRIANGLE: j = "DRAW_TRIANGLE"; break;
-        case Opcode::HALT: j = "HALT"; break;
-        default: j = "UNKNOWN"; break;
+    const auto& metadata = detail::get_opcode_metadata();
+    auto it = metadata.find(op);
+    if (it != metadata.end()) {
+        j = it->second.first;
+    } else {
+        j = "UNKNOWN";
     }
 }
 
@@ -109,26 +135,13 @@ inline void to_json(nlohmann::json& j, const Opcode& op) {
  * @return The operand size in bytes (0 or 1). Returns -1 for an unknown opcode.
  */
 inline int getOperandSize(Opcode op) {
-    switch (op) {
-        // Opcodes with a 1-byte operand
-        case Opcode::PUSH: case Opcode::JMP: case Opcode::JZ: case Opcode::JNZ:
-        case Opcode::CALL: case Opcode::LOAD: case Opcode::STORE:
-        case Opcode::SET_X: case Opcode::SET_Y:
-            return 1;
-
-        // Opcodes with no operand
-        case Opcode::NOP: case Opcode::POP: case Opcode::ADD: case Opcode::SUB:
-        case Opcode::MUL: case Opcode::DIV: case Opcode::MOD: case Opcode::AND:
-        case Opcode::OR: case Opcode::XOR: case Opcode::NOT: case Opcode::RET:
-        case Opcode::DRAW_PIXEL: case Opcode::SET_COLOR_R: case Opcode::SET_COLOR_G:
-        case Opcode::SET_COLOR_B: case Opcode::RANDOM: case Opcode::DUP: case Opcode::SWAP:
-        case Opcode::ROT: case Opcode::DRAW_CIRCLE: case Opcode::DRAW_RECTANGLE:
-        case Opcode::DRAW_LINE: case Opcode::DRAW_BEZIER_CURVE: case Opcode::DRAW_TRIANGLE:
-        case Opcode::HALT:
-            return 0;
-
-        default: return -1; // Unknown opcode
+    const auto& metadata = detail::get_opcode_metadata();
+    auto it = metadata.find(op);
+    if (it != metadata.end()) {
+        // The operand size is the second element in the pair.
+        return it->second.second;
     }
+    return -1; // Unknown opcode
 }
 
 } // namespace evosim

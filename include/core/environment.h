@@ -68,6 +68,7 @@ public:
         double cooperation_bonus;    ///< Cooperation fitness bonus
         bool enable_predation;       ///< Enable organism predation
         bool enable_random_catastrophes; ///< Enable random catastrophe events
+        double immigration_chance;   ///< Chance of creating a new random organism instead of crossover.
 
         // --- Fitness Function Weights ---
         // These weights determine the contribution of different high-level metrics
@@ -82,7 +83,7 @@ public:
               resource_abundance(1.0), generation_time_ms(1000),
               enable_aging(true), max_age_ms(30000), enable_competition(true),
               competition_intensity(0.5), enable_cooperation(false), cooperation_bonus(0.1),
-              enable_predation(true), enable_random_catastrophes(true),
+              enable_predation(true), enable_random_catastrophes(true), immigration_chance(0.20),
               fitness_weight_symmetry(0.6), fitness_weight_variation(0.4) {
         }
     };
@@ -327,6 +328,7 @@ inline void to_json(nlohmann::json& j, const Environment::Config& c) {
         {"cooperation_bonus", c.cooperation_bonus},
         {"enable_predation", c.enable_predation},
         {"enable_random_catastrophes", c.enable_random_catastrophes},
+        {"immigration_chance", c.immigration_chance},
         {"fitness_weight_symmetry", c.fitness_weight_symmetry},
         {"fitness_weight_variation", c.fitness_weight_variation}
     };
@@ -350,6 +352,7 @@ inline void from_json(const nlohmann::json& j, Environment::Config& c) {
     j.at("cooperation_bonus").get_to(c.cooperation_bonus);
     j.at("enable_predation").get_to(c.enable_predation);
     j.at("enable_random_catastrophes").get_to(c.enable_random_catastrophes);
+    j.at("immigration_chance").get_to(c.immigration_chance);
     j.at("fitness_weight_symmetry").get_to(c.fitness_weight_symmetry);
     j.at("fitness_weight_variation").get_to(c.fitness_weight_variation);
 }

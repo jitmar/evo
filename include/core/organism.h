@@ -83,6 +83,16 @@ public:
     OrganismPtr replicate(const BytecodeVM& vm, double mutation_rate = 0.01, uint32_t max_mutations = 5) const;
 
     /**
+     * @brief Creates a new organism by combining this organism's bytecode with another's.
+     * @param other The other parent organism.
+     * @param vm The BytecodeVM instance to use for creating the offspring's phenotype.
+     * @param mutation_rate Probability of mutation per byte after crossover.
+     * @param max_mutations Maximum number of mutations per replication.
+     * @return New organism created from crossover and mutation.
+     */
+    OrganismPtr reproduceWith(const OrganismPtr& other, const BytecodeVM& vm, double mutation_rate, uint32_t max_mutations) const;
+
+    /**
      * @brief Get organism bytecode
      * @return Const reference to bytecode
      */
@@ -137,6 +147,7 @@ private:
     mutable Stats stats_;              ///< Organism statistics (mutable for replication tracking)
     Image phenotype_;                  ///< The generated image from the bytecode
     mutable std::mutex mutex_;         ///< Thread safety mutex
+    mutable std::mt19937 rng_;         ///< Random number generator for mutations/crossover
 
     static std::atomic<uint64_t> next_id_;  ///< Next available organism ID
 
@@ -155,5 +166,7 @@ private:
      */
     uint8_t generateRandomByte() const;
 };
+
+std::vector<size_t> findUnitBoundaries(const Organism::Bytecode& bytecode);
 
 } // namespace evosim 

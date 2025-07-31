@@ -297,9 +297,13 @@ uint32_t Environment::performSelection() {
 }
 
 uint32_t Environment::performReproduction(const std::vector<OrganismPtr>& reproduction_pool) {
-    uint32_t target_size = std::min(config_.max_population, 
+    uint32_t target_size = std::min(config_.max_population,
                                    std::max(config_.min_population,
                                            static_cast<uint32_t>(std::ceil(static_cast<double>(population_.size()) * 1.1))));
+
+    std::uniform_real_distribution<> chance_dist(0.0, 1.0);
+    BytecodeGenerator generator(vm_.getConfig().image_width, vm_.getConfig().image_height);
+
     std::vector<OrganismPtr> new_organisms;
     const size_t max_iterations = 10 * target_size; // Safety limit
     size_t iterations = 0;
@@ -307,17 +311,32 @@ uint32_t Environment::performReproduction(const std::vector<OrganismPtr>& reprod
 
     while (population_.size() + new_organisms.size() < target_size && iterations < max_iterations) {
         ++iterations;
-        
-        if (reproduction_pool.empty()) {
-            // No more viable parents, stop trying to reproduce.
-            break;
+
+        OrganismPtr offspring;
+        if (chance_dist(rng_) < config_.immigration_chance) {
+            // Immigration: Create a new, random organism from scratch.
+            std::uniform_int_distribution<size_t> num_primitives_dist(5, 15);
+            auto bytecode = generator.generateInitialBytecode(num_primitives_dist(rng_));
+            offspring = std::make_shared<Organism>(std::move(bytecode), vm_, stats_.generation);
+        } else {
+            // Sexual Reproduction: Crossover from two parents.
+            if (reproduction_pool.size() < 2) {
+                break; // Need at least two parents for crossover.
+            }
+
+            // Select two distinct parents from the pool.
+            size_t p1_idx = parent_idx % reproduction_pool.size();
+            size_t p2_idx = (parent_idx + 1) % reproduction_pool.size();
+            if (p1_idx == p2_idx) p2_idx = (p2_idx + 1) % reproduction_pool.size();
+            parent_idx++;
+
+            const auto& parent1 = reproduction_pool[p1_idx];
+            const auto& parent2 = reproduction_pool[p2_idx];
+
+            // Perform single-point crossover on the bytecode.
+            offspring = parent1->reproduceWith(parent2, vm_, config_.mutation_rate, config_.max_mutations);
         }
-        // Cycle through the best parents from the pre-sorted pool. This is far more
-        // efficient than re-sorting and also improves genetic diversity by not
-        // only ever picking the single best organism.
-        auto parent = reproduction_pool[parent_idx % reproduction_pool.size()];
-        parent_idx++;
-        auto offspring = parent->replicate(vm_, config_.mutation_rate, config_.max_mutations);
+
         if (!offspring) {
             continue;
         }
