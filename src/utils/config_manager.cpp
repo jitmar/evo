@@ -2,6 +2,7 @@
 #include "spdlog/spdlog.h"
 #include "yaml-cpp/yaml.h"
 #include <fstream>
+#include "core/bytecode_generator.h" // Include for BytecodeGenerator::Config
 
 namespace evosim {
 
@@ -51,7 +52,7 @@ Environment::Config ConfigManager::getEnvironmentConfig() const {
     }
 
     const auto& env_node = (*config_root_)["environment"];
-    get_value(env_node["initial_population"], cfg.initial_population);
+    get_value(env_node["initial_population_size"], cfg.initial_population_size);
     get_value(env_node["max_population"], cfg.max_population);
     get_value(env_node["min_population"], cfg.min_population);
     get_value(env_node["mutation_rate"], cfg.mutation_rate);
@@ -67,6 +68,22 @@ Environment::Config ConfigManager::getEnvironmentConfig() const {
     get_value(env_node["cooperation_bonus"], cfg.cooperation_bonus);
     get_value(env_node["enable_predation"], cfg.enable_predation);
     get_value(env_node["enable_random_catastrophes"], cfg.enable_random_catastrophes);
+    get_value(env_node["bytecode_length_penalty"], cfg.bytecode_length_penalty);
+
+    if (env_node["bytecode_generation"]) {
+        const auto& bg_node = env_node["bytecode_generation"];
+        get_value(bg_node["min_units_per_organism"], cfg.bytecode_generation.min_units_per_organism);
+        get_value(bg_node["max_units_per_organism"], cfg.bytecode_generation.max_units_per_organism);
+        get_value(bg_node["primitive_unit_probability"], cfg.bytecode_generation.primitive_unit_probability);
+        get_value(bg_node["min_opcodes_per_composite"], cfg.bytecode_generation.min_opcodes_per_composite);
+        get_value(bg_node["max_opcodes_per_composite"], cfg.bytecode_generation.max_opcodes_per_composite);
+
+        // Validate and clamp the probability to ensure it's in the [0.0, 1.0] range.
+        if (cfg.bytecode_generation.primitive_unit_probability < 0.0 || cfg.bytecode_generation.primitive_unit_probability > 1.0) {
+            spdlog::warn("primitive_unit_probability ({}) is outside the valid [0.0, 1.0] range. Clamping.", cfg.bytecode_generation.primitive_unit_probability);
+            cfg.bytecode_generation.primitive_unit_probability = std::clamp(cfg.bytecode_generation.primitive_unit_probability, 0.0, 1.0);
+        }
+    }
 
     return cfg;
 }

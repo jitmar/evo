@@ -26,6 +26,7 @@ target_link_libraries(evosim_tests PRIVATE
     GTest::gtest        # The Google Test library.
     GTest::gtest_main   # Provides the main() function for the test runner.
     Threads::Threads    # Explicitly link to the threads library, as it's needed by engine tests.
+    spdlog::spdlog     # Add spdlog explicitly for logging support
 )
 
 # Add tests

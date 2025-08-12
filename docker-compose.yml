@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  evosim:
+    build: .
+    container_name: evosim
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./saves:/app/saves
+      - ./config:/app/config
+      - ./results:/app/results
+    environment:
+      - EVOSIM_DATA_DIR=/app/data
+      - EVOSIM_LOG_DIR=/app/logs
+      - EVOSIM_SAVE_DIR=/app/saves
+      - EVOSIM_CONFIG_DIR=/app/config
+      - EVOSIM_RESULTS_DIR=/app/results
+    ports:
+      - "8080:8080"
+    command: ["interactive"]
+    stdin_open: true
+    tty: true
+
+  evosim-daemon:
+    build: .
+    container_name: evosim-daemon
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./saves:/app/saves
+      - ./config:/app/config
+      - ./results:/app/results
+    environment:
+      - EVOSIM_DATA_DIR=/app/data
+      - EVOSIM_LOG_DIR=/app/logs
+      - EVOSIM_SAVE_DIR=/app/saves
+      - EVOSIM_CONFIG_DIR=/app/config
+      - EVOSIM_RESULTS_DIR=/app/results
+    command: ["daemon"]
+    profiles:
+      - daemon
+
+  evosim-cli:
+    build: .
+    container_name: evosim-cli
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./saves:/app/saves
+      - ./config:/app/config
+      - ./results:/app/results
+    environment:
+      - EVOSIM_DATA_DIR=/app/data
+      - EVOSIM_LOG_DIR=/app/logs
+      - EVOSIM_SAVE_DIR=/app/saves
+      - EVOSIM_CONFIG_DIR=/app/config
+      - EVOSIM_RESULTS_DIR=/app/results
+    command: ["--help"]
+    profiles:
+      - cli
+
+volumes:
+  evosim_data:
+    driver: local
+  evosim_logs:
+    driver: local
+  evosim_saves:
+    driver: local
+  evosim_config:
+    driver: local
+  evosim_results:
+    driver: local 

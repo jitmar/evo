@@ -10,7 +10,7 @@ protected:
     void SetUp() override {
         Environment::Config config;
         config.max_population = 20;
-        config.initial_population = 0;
+        config.initial_population_size = 0;
         config.min_population = 1;
         config.mutation_rate = 0.01;
         config.max_mutations = 3;
@@ -147,7 +147,7 @@ TEST_F(EnvironmentTest, GetStats) {
 TEST_F(EnvironmentTest, SetConfig) {
     Environment::Config new_config;
     new_config.max_population = 30;
-    new_config.initial_population = 5;
+    new_config.initial_population_size = 5;
     new_config.min_population = 2;
     new_config.mutation_rate = 0.02;
     new_config.max_mutations = 4;

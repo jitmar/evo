@@ -3,6 +3,7 @@
 #include <thread>
 #include "core/bytecode_vm.h"
 #include <set>
+#include "core/opcodes.h"
 #include <mutex> // Added for mutex
 #include "nlohmann/json.hpp"
 
@@ -20,7 +21,7 @@ protected:
     }
 
     Organism::Bytecode test_bytecode_;
-    BytecodeVM vm_;
+    BytecodeVM vm_{};
 };
 
 TEST_F(OrganismTest, Constructor) {
@@ -210,4 +211,57 @@ TEST_F(OrganismTest, ThreadSafety) {
     }
     
     EXPECT_EQ(results.size(), 10);
-} 
+}
+
+// --- New tests for reproduceWith ---
+
+TEST_F(OrganismTest, ReproduceWith_SimpleCrossover) {
+    // Parent 1 has a simple, uniform bytecode.
+    Organism::Bytecode bc1(8, static_cast<uint8_t>(Opcode::PUSH));
+    auto parent1 = std::make_shared<Organism>(bc1, vm_);
+
+    // Parent 2 has a different simple, uniform bytecode.
+    Organism::Bytecode bc2(8, static_cast<uint8_t>(Opcode::POP));
+    auto parent2 = std::make_shared<Organism>(bc2, vm_);
+
+    // Reproduce with no mutation to isolate the crossover logic.
+    auto child = parent1->reproduceWith(parent2, vm_, 0.0, 0);
+
+    // NOTE: This test is not fully deterministic because the Organism class
+    // does not currently provide a way to seed its internal random number
+    // generator. A deterministic test would require a seeded constructor or
+    // a setter for the seed.
+
+    const auto& child_bc = child->getBytecode();
+    ASSERT_EQ(child_bc.size(), 8);
+
+    // Since the crossover point is random, we can't check for an exact
+    // bytecode sequence. Instead, we verify that all bytes in the child
+    // come from one of the two parents, which is a valid check for correct
+    // crossover without mutation.
+    for (const auto& byte : child_bc) {
+        EXPECT_TRUE(byte == static_cast<uint8_t>(Opcode::PUSH) || byte == static_cast<uint8_t>(Opcode::POP))
+            << "Child bytecode contains unexpected opcodes.";
+    }
+}
+
+TEST_F(OrganismTest, ReproduceWith_UnitCrossover) {
+    // Parent 1 has one bytecode "unit".
+    Organism::Bytecode bc1 = { static_cast<uint8_t>(Opcode::PUSH), 1, static_cast<uint8_t>(Opcode::HALT) };
+    auto parent1 = std::make_shared<Organism>(bc1, vm_);
+
+    // Parent 2 has a different "unit".
+    Organism::Bytecode bc2 = { static_cast<uint8_t>(Opcode::PUSH), 9, static_cast<uint8_t>(Opcode::HALT) };
+    auto parent2 = std::make_shared<Organism>(bc2, vm_);
+
+    auto child = parent1->reproduceWith(parent2, vm_, 0.0, 0);
+
+    // NOTE: This test is also non-deterministic.
+    // In unit crossover, entire HALT-terminated sections are swapped. Since
+    // the crossover point is random, the child could end up with a copy of
+    // either parent's full bytecode if the crossover selects all units from
+    // one parent. This test verifies that possibility.
+    const auto& child_bc = child->getBytecode();
+    EXPECT_TRUE(child_bc == parent1->getBytecode() || child_bc == parent2->getBytecode())
+        << "Child bytecode should be one of the parent's units in this simple case.";
+}

@@ -1,8 +1,5 @@
 #pragma once
 
-#include "organism.h"
-#include "bytecode_vm.h"
-#include "symmetry_analyzer.h"
 #include <vector>
 #include <memory>
 #include <unordered_map>
@@ -10,7 +7,13 @@
 #include <atomic>
 #include <chrono>
 #include <random>
+#include <algorithm> // For std::clamp
 #include "nlohmann/json.hpp"
+#include "organism.h"
+#include "bytecode_vm.h"
+#include "symmetry_analyzer.h"
+#include "bytecode_generator.h"
+#include "utils/thread_pool.h"
 
 namespace evosim {
 
@@ -52,7 +55,7 @@ public:
      */
     struct Config {
         uint32_t max_population;     ///< Maximum population size
-        uint32_t initial_population; ///< Initial population size
+        uint32_t initial_population_size; ///< Initial population size
         uint32_t initial_bytecode_size; ///< The initial size of bytecode for new organisms.
         uint32_t min_population;     ///< Minimum population size
         uint32_t elite_count;        ///< Number of fittest organisms to preserve each generation.
@@ -75,16 +78,23 @@ public:
         // to the final fitness score. They should ideally sum to 1.0.
         double fitness_weight_symmetry;    ///< Weight for the combined score from SymmetryAnalyzer (symmetry, complexity, etc.).
         double fitness_weight_variation;   ///< Weight for the color variation score (rewards non-monochrome images).
+        double bytecode_length_penalty; ///< Penalty factor for bytecode length.
+
+        BytecodeGenerator::Config bytecode_generation; ///< Settings for initial bytecode generation.
+
+        bool enable_parallel_execution; ///< Enable parallel fitness evaluation
+        uint32_t num_threads;           ///< Number of threads for parallel execution
 
         Config()
-            : max_population(1000), initial_population(100),
+            : max_population(1000), initial_population_size(100),
               initial_bytecode_size(64), min_population(10), elite_count(2),
               mutation_rate(0.01), max_mutations(5),
               resource_abundance(1.0), generation_time_ms(1000),
               enable_aging(true), max_age_ms(30000), enable_competition(true),
               competition_intensity(0.5), enable_cooperation(false), cooperation_bonus(0.1),
               enable_predation(true), enable_random_catastrophes(true), immigration_chance(0.20),
-              fitness_weight_symmetry(0.6), fitness_weight_variation(0.4) {
+              fitness_weight_symmetry(0.6), fitness_weight_variation(0.4), bytecode_length_penalty(0.0),
+              enable_parallel_execution(true), num_threads(std::thread::hardware_concurrency()) {
         }
     };
 
@@ -267,6 +277,7 @@ private:
     SymmetryAnalyzer analyzer_;         ///< Symmetry analyzer
     mutable std::mt19937 rng_;          ///< Random number generator
     mutable std::mutex mutex_;          ///< Thread safety mutex
+    utils::ThreadPool thread_pool_;            ///< Thread pool for parallel tasks
 
     void apply_resource_scarcity_();
     void apply_random_catastrophe_();
@@ -312,7 +323,7 @@ private:
 inline void to_json(nlohmann::json& j, const Environment::Config& c) {
     j = nlohmann::json{
         {"max_population", c.max_population},
-        {"initial_population", c.initial_population},
+        {"initial_population_size", c.initial_population_size},
         {"initial_bytecode_size", c.initial_bytecode_size},
         {"min_population", c.min_population},
         {"elite_count", c.elite_count},
@@ -330,13 +341,15 @@ inline void to_json(nlohmann::json& j, const Environment::Config& c) {
         {"enable_random_catastrophes", c.enable_random_catastrophes},
         {"immigration_chance", c.immigration_chance},
         {"fitness_weight_symmetry", c.fitness_weight_symmetry},
-        {"fitness_weight_variation", c.fitness_weight_variation}
+        {"fitness_weight_variation", c.fitness_weight_variation},
+        {"bytecode_length_penalty", c.bytecode_length_penalty},
+        {"bytecode_generation", c.bytecode_generation}
     };
 }
 
 inline void from_json(const nlohmann::json& j, Environment::Config& c) {
     j.at("max_population").get_to(c.max_population);
-    j.at("initial_population").get_to(c.initial_population);
+    j.at("initial_population_size").get_to(c.initial_population_size);
     j.at("initial_bytecode_size").get_to(c.initial_bytecode_size);
     j.at("min_population").get_to(c.min_population);
     j.at("elite_count").get_to(c.elite_count);
@@ -355,6 +368,9 @@ inline void from_json(const nlohmann::json& j, Environment::Config& c) {
     j.at("immigration_chance").get_to(c.immigration_chance);
     j.at("fitness_weight_symmetry").get_to(c.fitness_weight_symmetry);
     j.at("fitness_weight_variation").get_to(c.fitness_weight_variation);
+    // These might not exist in older configs, so use .value() for safety.
+    c.bytecode_length_penalty = j.value("bytecode_length_penalty", 0.0);
+    c.bytecode_generation = j.value("bytecode_generation", BytecodeGenerator::Config{});
 }
 
 inline void to_json(nlohmann::json& j, const Environment::EnvironmentStats& s) {

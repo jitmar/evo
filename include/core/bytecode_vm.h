@@ -28,6 +28,7 @@ public:
      */
     struct VMState {
         std::vector<uint8_t> stack;     ///< Operand stack
+        std::vector<uint32_t> return_stack; ///< Return address stack for CALL/RET
         std::vector<uint8_t> memory;    ///< Memory space
         uint32_t pc;                    ///< Program counter
         uint32_t x, y;                  ///< Current drawing position
@@ -43,10 +44,11 @@ public:
         uint32_t image_height;    ///< Output image height
         uint32_t memory_size;     ///< VM memory size
         uint32_t stack_size;      ///< Stack size limit
+        uint32_t return_stack_size; ///< Return stack size limit
         uint32_t max_instructions; ///< Maximum instructions per execution
         
         Config() : image_width(256), image_height(256), memory_size(1024),
-                   stack_size(256), max_instructions(10000) {}
+                   stack_size(256), return_stack_size(64), max_instructions(10000) {}
     };
 
     struct ExecutionStats {
@@ -240,6 +242,7 @@ inline void to_json(nlohmann::json& j, const BytecodeVM::Config& c) {
         {"image_height", c.image_height},
         {"memory_size", c.memory_size},
         {"stack_size", c.stack_size},
+        {"return_stack_size", c.return_stack_size},
         {"max_instructions", c.max_instructions}
     };
 }
@@ -249,6 +252,7 @@ inline void from_json(const nlohmann::json& j, BytecodeVM::Config& c) {
     j.at("image_height").get_to(c.image_height);
     j.at("memory_size").get_to(c.memory_size);
     j.at("stack_size").get_to(c.stack_size);
+    j.at("return_stack_size").get_to(c.return_stack_size);
     j.at("max_instructions").get_to(c.max_instructions);
 }
 

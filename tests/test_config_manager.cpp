@@ -27,7 +27,7 @@ protected:
 TEST_F(ConfigManagerTest, LoadValidConfigFile) {
     const std::string content = R"(
 environment:
-  initial_population: 150
+  initial_population_size: 150
   mutation_rate: 0.05
   enable_predation: false
 
@@ -45,7 +45,7 @@ bytecode_vm:
     ASSERT_TRUE(manager.load());
 
     auto env_config = manager.getEnvironmentConfig();
-    EXPECT_EQ(env_config.initial_population, 150);
+    EXPECT_EQ(env_config.initial_population_size, 150);
     EXPECT_DOUBLE_EQ(env_config.mutation_rate, 0.05);
     EXPECT_FALSE(env_config.enable_predation);
     // Check a default value was not overwritten
@@ -71,7 +71,7 @@ TEST_F(ConfigManagerTest, LoadMissingConfigFile) {
     // Verify that default values are used
     auto env_config = manager.getEnvironmentConfig();
     Environment::Config default_env_config;
-    EXPECT_EQ(env_config.initial_population, default_env_config.initial_population);
+    EXPECT_EQ(env_config.initial_population_size, default_env_config.initial_population_size);
     EXPECT_DOUBLE_EQ(env_config.mutation_rate, default_env_config.mutation_rate);
 
     auto engine_config = manager.getEvolutionEngineConfig();
@@ -82,7 +82,7 @@ TEST_F(ConfigManagerTest, LoadMissingConfigFile) {
 TEST_F(ConfigManagerTest, LoadMalformedConfigFile) {
     const std::string content = R"(
 environment:
-  initial_population: 150
+  initial_population_size: 150
     bad_indent: true
 )";
     createTestConfigFile("malformed_config.yaml", content);

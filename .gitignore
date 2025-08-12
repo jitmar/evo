@@ -62,10 +62,6 @@ logs/
 
 # Data files
 *.evo
-*.csv
-*.json
-*.yaml
-*.yml
 data/
 saves/
 results/
@@ -107,3 +103,12 @@ config/private.conf
 # Test artifacts
 test-results/
 test-output/ 
+
+# AI artifact
+GEMINI.md
+
+# Simulation artifact
+initial_phenotypes/
+
+# Mischellaneous artifacts
+local/

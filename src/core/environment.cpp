@@ -21,7 +21,8 @@ Environment::Environment(
     : config_(config)
     , vm_(vm_config)
     , analyzer_(analyzer_config)
-    , rng_(std::random_device{}()) {
+    , rng_(std::random_device{}())
+    , thread_pool_(config.num_threads) {
     initialize();
 }
 
@@ -42,35 +43,36 @@ void Environment::initialize() {
     stats_ = EnvironmentStats{};
     
     auto vm_config = vm_.getConfig();
-    BytecodeGenerator generator(vm_config.image_width, vm_config.image_height);
+    BytecodeGenerator generator(config_.bytecode_generation, vm_config.image_width, vm_config.image_height);
 
     // --- Create a guaranteed non-blank organism to seed the population ---
     // This ensures there is at least one organism with a visible phenotype,
     // which helps kickstart the evolutionary process.
-    if (config_.initial_population > 0) {
-        BytecodeGenerator::Bytecode seed_bytecode = generator.createNonBlackCirclePrimitive();
+    if (config_.initial_population_size > 0) {
+        auto seed_bytecode = generator.createNonBlackCirclePrimitive();
         auto seed_organism = std::make_shared<Organism>(std::move(seed_bytecode), vm_, 0);
         population_[seed_organism->getStats().id] = seed_organism;
         stats_.total_organisms_created++;
     }
 
     // --- Fill the rest of the population with randomly generated organisms ---
-    std::uniform_int_distribution<size_t> num_primitives_dist(5, 15);
-    uint32_t remaining_population = (config_.initial_population > 0) ? config_.initial_population - 1 : 0;
+    uint32_t remaining_population = (config_.initial_population_size > 0) ? config_.initial_population_size - 1 : 0;
 
     for (uint32_t i = 0; i < remaining_population; ++i) {
-        size_t num_primitives = num_primitives_dist(rng_);
-        auto bytecode = generator.generateInitialBytecode(num_primitives);
+        auto bytecode = generator.generateOrganismBytecode();
         // We use an Organism constructor that accepts pre-made bytecode.
         auto organism = std::make_shared<Organism>(std::move(bytecode), vm_, 0);
         population_[organism->getStats().id] = organism;
         stats_.total_organisms_created++;
     }
-    spdlog::info("Initialized population with {} organisms, including one guaranteed non-black seed.", config_.initial_population);
+    spdlog::info("Initialized population with {} organisms, including one guaranteed non-black seed.", config_.initial_population_size);
     updateStats();
 }
 
 bool Environment::update() {
+    // Record the start time of the generation update.
+    std::chrono::steady_clock::time_point generation_start_time = Clock::now();
+
     try {
         // Step 1: Get a snapshot of the current population to evaluate fitness.
         std::vector<OrganismPtr> current_population;
@@ -85,10 +87,25 @@ bool Environment::update() {
             }
         }
 
-        // Step 2: Perform the expensive fitness evaluation WITHOUT holding the main environment lock.
-        for (const auto& organism : current_population) {
-            double fitness = evaluateFitness(organism);
-            organism->setFitnessScore(fitness);
+        // Step 2: Perform the expensive fitness evaluation.
+        if (config_.enable_parallel_execution) {
+            std::vector<std::future<void>> futures;
+            futures.reserve(current_population.size());
+            for (const auto& organism : current_population) {
+                futures.emplace_back(thread_pool_.enqueue([this, organism]() {
+                    double fitness = evaluateFitness(organism);
+                    organism->setFitnessScore(fitness);
+                }));
+            }
+            for (auto& future : futures) {
+                future.get(); // Wait for all evaluations to complete
+            }
+        } else {
+            // Sequential evaluation
+            for (const auto& organism : current_population) {
+                double fitness = evaluateFitness(organism);
+                organism->setFitnessScore(fitness);
+            }
         }
 
         // Step 3: Re-acquire the lock to apply pressures and reproduce.
@@ -122,6 +139,18 @@ bool Environment::update() {
             stats_.last_update = Clock::now();
             updateStats();
         }
+
+        // Enforce minimum generation time
+        std::chrono::steady_clock::time_point generation_end_time = Clock::now();
+        auto elapsed_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(generation_end_time - generation_start_time).count();
+
+        if (config_.generation_time_ms > 0 && elapsed_time_ms < config_.generation_time_ms) {
+            auto time_to_sleep_ms = config_.generation_time_ms - elapsed_time_ms;
+            
+            std::this_thread::sleep_for(std::chrono::milliseconds(time_to_sleep_ms));
+        
+        }
+
         return true;
     } catch (const std::exception& e) {
         // It's safer to lock here as well, in case the exception was thrown from a non-locked part.
@@ -199,8 +228,11 @@ nlohmann::json Environment::getFullConfig() const {
 double Environment::evaluateFitness(const OrganismPtr& organism) {
     if (!organism) return 0.0;
     
-    // Generate image from organism's bytecode
-    auto image = vm_.execute(organism->getBytecode());
+    // To ensure thread safety during parallel execution, create a temporary
+    // VM instance for each evaluation. This avoids data races on the shared
+    // environment's vm_ member.
+    BytecodeVM temp_vm(vm_.getConfig());
+    auto image = temp_vm.execute(organism->getBytecode());
     
     // --- Early Exit for Blank Images (Anti-Stagnation) ---
     // This is a crucial step to prevent evolution from getting stuck on the
@@ -302,7 +334,7 @@ uint32_t Environment::performReproduction(const std::vector<OrganismPtr>& reprod
                                            static_cast<uint32_t>(std::ceil(static_cast<double>(population_.size()) * 1.1))));
 
     std::uniform_real_distribution<> chance_dist(0.0, 1.0);
-    BytecodeGenerator generator(vm_.getConfig().image_width, vm_.getConfig().image_height);
+    BytecodeGenerator generator(config_.bytecode_generation, vm_.getConfig().image_width, vm_.getConfig().image_height);
 
     std::vector<OrganismPtr> new_organisms;
     const size_t max_iterations = 10 * target_size; // Safety limit
@@ -315,8 +347,7 @@ uint32_t Environment::performReproduction(const std::vector<OrganismPtr>& reprod
         OrganismPtr offspring;
         if (chance_dist(rng_) < config_.immigration_chance) {
             // Immigration: Create a new, random organism from scratch.
-            std::uniform_int_distribution<size_t> num_primitives_dist(5, 15);
-            auto bytecode = generator.generateInitialBytecode(num_primitives_dist(rng_));
+            auto bytecode = generator.generateOrganismBytecode();
             offspring = std::make_shared<Organism>(std::move(bytecode), vm_, stats_.generation);
         } else {
             // Sexual Reproduction: Crossover from two parents.
@@ -556,6 +587,12 @@ bool Environment::loadState(const std::string& filename) {
 
         // Load stats
         stats_ = data.at("stats").get<EnvironmentStats>();
+
+        // --- Reset Thread Pool ---
+        // The thread pool must be reset to match the loaded configuration.
+        // If the number of threads in the loaded config is different from the
+        // one the pool was constructed with, we need to reconstruct it.
+        thread_pool_.resize(config_.num_threads);
 
         // --- Safely load RNG state (FIX for hang) ---
         if (data.contains("rng_state") && !data.at("rng_state").is_null()) {

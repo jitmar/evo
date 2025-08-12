@@ -271,13 +271,23 @@ bool BytecodeVM::executeInstruction(Opcode opcode, uint8_t operand) const {
             return true;
             
         case Opcode::CALL:
-            // Simple call implementation - just jump
+            if (state_.return_stack.size() >= config_.return_stack_size) {
+                last_stats_.error_message = "Return stack overflow";
+                return false;
+            }
+            // Push the address of the *next* instruction
+            state_.return_stack.push_back(state_.pc + 2);
             state_.pc = operand;
             return true;
             
         case Opcode::RET:
-            // Simple return implementation - just continue
-            state_.pc++;
+            if (state_.return_stack.empty()) {
+                last_stats_.error_message = "Return stack underflow";
+                return false;
+            }
+            // Pop the return address and jump back
+            state_.pc = state_.return_stack.back();
+            state_.return_stack.pop_back();
             return true;
             
         case Opcode::LOAD:
@@ -546,7 +556,18 @@ void BytecodeVM::drawLine(int x1, int y1, int x2, int y2) const {
     const int sy = (y1 < y2) ? 1 : -1;
     int err = dx + dy;
 
+    spdlog::debug("drawLine started: ({}, {}) to ({}, {})", x1, y1, x2, y2);
+    int iterations = 0;
+    const int max_iterations_check = (static_cast<int>(config_.image_width) + static_cast<int>(config_.image_height)) * 2;
+
     while (true) {
+        iterations++;
+        if (iterations > max_iterations_check) {
+            spdlog::warn("drawLine has exceeded {} iterations, likely an infinite loop. Start: ({}, {}), End: ({}, {}), Current: ({}, {})", 
+                         max_iterations_check, x1, y1, x2, y2, x1, y1);
+            break; // Break to prevent test hangs during debugging.
+        }
+
         // Ensure coordinates are non-negative before casting to unsigned for bounds check.
         if (x1 >= 0 && y1 >= 0 && isInBounds(static_cast<uint32_t>(x1), static_cast<uint32_t>(y1))) {
             cv::Vec3b& pixel = canvas_.at<cv::Vec3b>(y1, x1);
@@ -605,6 +626,7 @@ bool BytecodeVM::isInBounds(uint32_t x, uint32_t y) const {
 
 void BytecodeVM::initializeState() const {
     state_.stack.clear();
+    state_.return_stack.clear();
     state_.memory.resize(config_.memory_size, 0);
     state_.pc = 0;
     state_.x = 0;

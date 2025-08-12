@@ -67,7 +67,8 @@ public:
      * @brief Evolution event types
      */
     enum class EventType {
-        GENERATION_COMPLETED,    ///< Generation completed
+        GENERATION_STARTED,     ///< Generation started
+        GENERATION_COMPLETED,   ///< Generation completed
         ORGANISM_BORN,          ///< New organism created
         ORGANISM_DIED,          ///< Organism died
         FITNESS_IMPROVED,       ///< Best fitness improved
@@ -228,11 +229,13 @@ private:
     std::atomic<bool> paused_;          ///< Engine paused state
     std::atomic<bool> should_stop_;     ///< Stop request flag
     std::thread evolution_thread_;      ///< Evolution thread
-    // TODO: Consider refactoring the locking strategy to use a standard std::mutex
-    // instead of a recursive_mutex. This would require careful analysis to ensure
-    // no deadlocks occur (e.g., by using private non-locking helper methods).
-    mutable std::recursive_mutex mutex_;///< Recursive mutex for thread safety
-    std::condition_variable_any cv_;    ///< Condition variable for synchronization (works with recursive_mutex)
+    // A standard mutex is now used instead of a recursive one. This is generally
+    // safer and more performant. It requires careful management to avoid deadlocks,
+    // ensuring that locks are not acquired recursively. Private non-locking helper
+    // methods should be used for internal calls that need to access shared data
+    // without re-acquiring the lock.
+    mutable std::mutex mutex_;          ///< Mutex for thread safety
+    std::condition_variable cv_;        ///< Condition variable for synchronization
     EventCallback event_callback_;      ///< Event callback function
     std::deque<Event> history_;         ///< Evolution history
     mutable std::mutex history_mutex_;  ///< History mutex

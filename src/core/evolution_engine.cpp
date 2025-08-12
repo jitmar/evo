@@ -26,7 +26,7 @@ void to_json(nlohmann::json& j, const EvolutionEngine::Config& c) {
         {"enable_metrics", c.enable_metrics},
         {"metrics_interval", c.metrics_interval},
         {"enable_logging", c.enable_logging}};
-}   
+}
 
 EvolutionEngine::EvolutionEngine(EnvironmentPtr environment, const Config& config)
     : environment_(environment)
@@ -47,20 +47,22 @@ EvolutionEngine::~EvolutionEngine() {
  }
 
 bool EvolutionEngine::start() {
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::lock_guard<std::mutex> lock(mutex_);
 
     if (running_) {
         return false; // Already running
      }
 
     // --- Automatic Resuming Logic ---
-    const std::string checkpoint_file = config_.save_directory + "/checkpoint.json";
-    if (std::filesystem::exists(checkpoint_file)) {
-        spdlog::info("Checkpoint file found at '{}'. Attempting to resume.", checkpoint_file);
-        if (loadState(checkpoint_file)) {
-            spdlog::info("Successfully resumed from checkpoint. Starting evolution at generation {}.", stats_.total_generations);
-        } else {
-            spdlog::warn("Failed to load from checkpoint. Starting a new simulation.");
+    if (config_.enable_save_state) {
+        const std::string checkpoint_file = config_.save_directory + "/checkpoint.json";
+        if (std::filesystem::exists(checkpoint_file)) {
+            spdlog::info("Checkpoint file found at '{}'. Attempting to resume.", checkpoint_file);
+            if (loadState(checkpoint_file)) {
+                spdlog::info("Successfully resumed from checkpoint. Starting evolution at generation {}.", stats_.total_generations);
+            } else {
+                spdlog::warn("Failed to load from checkpoint. Starting a new simulation.");
+            }
         }
     }
 
@@ -88,7 +90,7 @@ bool EvolutionEngine::start() {
 
 bool EvolutionEngine::stop() {
     {
-        std::lock_guard<std::recursive_mutex> lock(mutex_);
+        std::lock_guard<std::mutex> lock(mutex_);
         if (!running_) {
             return false; // Not running
         }
@@ -106,7 +108,7 @@ bool EvolutionEngine::stop() {
     // The thread has now stopped (or will stop on its own).
     // The thread that called stop() is responsible for the final state cleanup.
     {
-        std::lock_guard<std::recursive_mutex> lock(mutex_);
+        std::lock_guard<std::mutex> lock(mutex_);
         running_ = false;
         paused_ = false;
         stats_.is_running = false;
@@ -117,7 +119,7 @@ bool EvolutionEngine::stop() {
 }
 
 bool EvolutionEngine::pause() {
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::lock_guard<std::mutex> lock(mutex_);
     
     if (!running_ || paused_) {
         return false;
@@ -132,7 +134,7 @@ bool EvolutionEngine::pause() {
 }
 
 bool EvolutionEngine::resume() {
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::lock_guard<std::mutex> lock(mutex_);
     
     if (!running_ || !paused_) {
         return false;
@@ -149,54 +151,62 @@ bool EvolutionEngine::resume() {
 
 // Rename runGeneration to RunGeneration and make it private
 bool EvolutionEngine::run_generation_() {
-    // This check is safe to do without a lock because these are atomic or only
-    // modified by the main thread when the loop is not running.
-    if (!running_ || paused_.load() || should_stop_.load()) {
+    // This function is called by evolutionLoop, which already holds the mutex.
+    // Therefore, this function must NOT acquire its own lock.
+
+    // Check stop/pause conditions. These are atomic, so safe to read without a lock.
+    // However, the calling evolutionLoop already ensures these conditions are met.
+    // This check is primarily for early exit if conditions change *during* environment update,
+    // but the primary control is in evolutionLoop's cv.wait.
+    if (!running_.load() || paused_.load() || should_stop_.load()) {
         return false;
     }
 
-    // --- Perform long-running work WITHOUT holding the lock ---
+    // Log that we're starting a generation
+    emitEvent({EventType::GENERATION_STARTED, stats_.total_generations + 1, Clock::now(), 
+               "Starting new generation", 0.0, 0});
+
     // The environment has its own internal mutex, so this call is thread-safe.
-    // This is the key change to prevent deadlocks with getStats().
-    if (environment_) {
-        if (!environment_->update()) {
-            std::lock_guard<std::recursive_mutex> lock(mutex_); // Lock only to emit the event
-            emitEvent({EventType::ERROR_OCCURRED, stats_.total_generations, Clock::now(), "Environment update failed for the generation.", 0.0, 0});
-            return false;
-        }
-    } else {
-        return false; // No environment to update.
-    }
-
-    // --- Acquire lock only to update the engine's internal state ---
-    try {
-        std::lock_guard<std::recursive_mutex> lock(mutex_);
-        // Re-check stop condition now that we have the lock, in case a stop was requested during the update.
-        if (should_stop_.load()) {
-            return false;
-        }
-        stats_.total_generations++;
-        stats_.last_generation_time = Clock::now();
-        emitEvent({EventType::GENERATION_COMPLETED, stats_.total_generations, Clock::now(), "Generation completed", 0.0, 0});
-        updateStats();
-        performPeriodicTasks(stats_.total_generations);
-
-        // --- Check for max generations stopping criterion ---
-        if (config_.max_generations > 0 && stats_.total_generations >= config_.max_generations) {
-            spdlog::info("Reached max generations ({}), stopping evolution.", config_.max_generations);
-            should_stop_ = true;
-        }
-
-        return true;
-    } catch (const std::exception& e) {
-        std::lock_guard<std::recursive_mutex> lock(mutex_); // Lock to emit the event
-        emitEvent({EventType::ERROR_OCCURRED, stats_.total_generations, Clock::now(), "Error in generation: " + std::string(e.what()), 0.0, 0});
+    // This is the long-running part that should ideally not hold the engine's main mutex.
+    // However, for the current fix, we are holding the mutex during this call.
+    if (!environment_) {
+        spdlog::error("No environment available for generation update");
+        emitEvent({EventType::ERROR_OCCURRED, stats_.total_generations, Clock::now(), 
+                  "No environment available for generation update.", 0.0, 0});
         return false;
     }
+
+    bool update_result = environment_->update();
+    if (!update_result) {
+        emitEvent({EventType::ERROR_OCCURRED, stats_.total_generations, Clock::now(), 
+                  "Environment update failed for the generation.", 0.0, 0});
+        return false;
+    }
+
+    // Update the engine's internal state. The calling evolutionLoop holds the mutex.
+    // Re-check stop condition in case a stop was requested during the environment update.
+    if (should_stop_.load()) {
+        return false;
+    }
+    stats_.total_generations++;
+    stats_.last_generation_time = Clock::now();
+    auto env_stats = environment_->getStats();
+    emitEvent({EventType::GENERATION_COMPLETED, stats_.total_generations, Clock::now(), 
+              "Generation completed - Pop: " + std::to_string(env_stats.population_size), 0.0, 0});
+    updateStats();
+    performPeriodicTasks(stats_.total_generations);
+
+    // Check for max generations stopping criterion
+    if (config_.max_generations > 0 && stats_.total_generations >= config_.max_generations) {
+        spdlog::info("Reached max generations ({}), stopping evolution.", config_.max_generations);
+        should_stop_ = true;
+    }
+
+    return true;
 }
 
 EvolutionEngine::EngineStats EvolutionEngine::getStats() const {
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::lock_guard<std::mutex> lock(mutex_);
     
     EngineStats stats = stats_;
     
@@ -223,23 +233,23 @@ EvolutionEngine::EngineStats EvolutionEngine::getStats() const {
 }
 
 void EvolutionEngine::registerEventCallback(EventCallback callback) {
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::lock_guard<std::mutex> lock(mutex_);
     event_callback_ = callback;
 }
 
 void EvolutionEngine::unregisterEventCallback() {
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::lock_guard<std::mutex> lock(mutex_);
     event_callback_ = nullptr;
 }
 
 bool EvolutionEngine::saveState(const std::string& filename) {
     // Public-facing method. Acquire lock and call the internal implementation.
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::lock_guard<std::mutex> lock(mutex_);
     return saveState_unlocked(filename);
 }
 
 bool EvolutionEngine::loadState(const std::string& filename) {
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::lock_guard<std::mutex> lock(mutex_);
     
     // Loading can only be done when the engine is stopped to prevent race conditions.
     if (running_) {
@@ -332,27 +342,37 @@ bool EvolutionEngine::exportData(const std::string& filename) const {
 }
 
 void EvolutionEngine::evolutionLoop() {
+    spdlog::debug("Evolution loop started");
     while (true) {
-        std::unique_lock<std::recursive_mutex> lock(mutex_);
+        std::unique_lock<std::mutex> lock(mutex_);
+        // Atomically wait until the engine is not paused or should be stopped.
+        cv_.wait(lock, [this] { return !paused_ || should_stop_; });
+
         if (should_stop_) {
+            spdlog::debug("Evolution loop stopping due to should_stop flag");
             break;
         }
-        if (paused_) {
-            cv_.wait(lock, [this] { return !paused_ || should_stop_; });
-            if (should_stop_) {
-                break;
-            }
-            continue;
-        }
-        lock.unlock();
+
+        // Now, while holding the lock, run one generation.
+        // run_generation_ must NOT acquire its own lock.
         bool gen_result = run_generation_();
-        if (!gen_result || should_stop_) {
+        if (!gen_result) {
+            spdlog::error("Evolution loop stopping due to generation failure");
+            should_stop_ = true; // Set stop flag while holding the lock
             break;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+        // No sleep is strictly necessary here as the generation time is controlled
+        // by the environment, but a small sleep can prevent busy-waiting if
+        // generations are extremely fast.
+        // The lock is released automatically when 'lock' goes out of scope at the end of the loop iteration,
+        // and re-acquired at the beginning of the next iteration.
+        // A small sleep here can prevent busy-waiting if generations are extremely fast.
+        // However, since environment_->update() is a blocking call, this sleep might not be strictly necessary.
+        // For now, let's keep it minimal or remove it if performance is critical and generations are long.
+        // For testing, a small sleep is fine.
+        std::this_thread::sleep_for(std::chrono::milliseconds(1)); 
     }
-    // The stop() method is now responsible for final state cleanup after joining
-    // the thread, which prevents race conditions and clarifies ownership.
 }
 
 void EvolutionEngine::emitEvent(const Event& event) {
