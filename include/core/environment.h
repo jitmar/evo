@@ -277,7 +277,7 @@ private:
     SymmetryAnalyzer analyzer_;         ///< Symmetry analyzer
     mutable std::mt19937 rng_;          ///< Random number generator
     mutable std::mutex mutex_;          ///< Thread safety mutex
-    utils::ThreadPool thread_pool_;            ///< Thread pool for parallel tasks
+    ThreadPool thread_pool_;            ///< Thread pool for parallel tasks
 
     void apply_resource_scarcity_();
     void apply_random_catastrophe_();

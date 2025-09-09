@@ -79,19 +79,7 @@ BytecodeGenerator::Bytecode BytecodeGenerator::generateOrganismBytecode() const 
     return final_bytecode;
 }
 
-BytecodeGenerator::Bytecode BytecodeGenerator::generateInitialBytecode(size_t num_primitives) const {
-    Bytecode bytecode;
-    if (primitive_generators_.empty()) return bytecode;
 
-    std::uniform_int_distribution<size_t> dist(0, primitive_generators_.size() - 1);
-
-    for (size_t i = 0; i < num_primitives; ++i) {
-        auto primitive = primitive_generators_[dist(rng_)]();
-        bytecode.insert(bytecode.end(), primitive.begin(), primitive.end());
-    }
-    bytecode.push_back(static_cast<uint8_t>(Opcode::HALT));
-    return bytecode;
-}
 
 BytecodeGenerator::Bytecode BytecodeGenerator::generateNonBlackColorBytecode() const {
     Bytecode bytecode = {

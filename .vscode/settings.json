@@ -106,5 +106,9 @@
         "print": "cpp",
         "queue": "cpp",
         "stack": "cpp"
-    }
+    },
+    "cSpell.words": [
+        "evosim"
+    ],
+    "kiroAgent.configureMCP": "Disabled"
 }

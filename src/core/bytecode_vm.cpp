@@ -661,34 +661,34 @@ BytecodeVM::VMState BytecodeVM::getLastState() const {
     return state_;
 }
 
-BytecodeVM::Bytecode BytecodeVM::generateRandomBytecode(uint32_t size) const {
-    if (size == 0) {
-        return {};
-    }
+// BytecodeVM::Bytecode BytecodeVM::generateRandomBytecode(uint32_t size) const {
+//     if (size == 0) {
+//         return {};
+//     }
 
-    // Delegate the complex generation to the dedicated BytecodeGenerator.
-    // This centralizes the logic for creating meaningful, drawable bytecode.
-    BytecodeGenerator generator(config_.image_width, config_.image_height);
+//     // Delegate the complex generation to the dedicated BytecodeGenerator.
+//     // This centralizes the logic for creating meaningful, drawable bytecode.
+//     BytecodeGenerator generator(config_.image_width, config_.image_height);
 
-    // Determine a reasonable number of primitives based on the requested size.
-    // A circle primitive is ~12 bytes. We aim for about half the space to be
-    // structured primitives, leaving room for mutations.
-    size_t num_primitives = std::max(1u, size / 25);
-    Bytecode bytecode = generator.generateInitialBytecode(num_primitives);
+//     // Determine a reasonable number of primitives based on the requested size.
+//     // A circle primitive is ~12 bytes. We aim for about half the space to be
+//     // structured primitives, leaving room for mutations.
+//     size_t num_primitives = std::max(1u, size / 25);
+//     Bytecode bytecode = generator.generateInitialBytecode(num_primitives);
 
-    // --- Adjust size and terminate ---
-    if (bytecode.size() > size) {
-        // Truncate if too long.
-        bytecode.resize(size);
-    } else {
-        // Pad with NOPs if too short.
-        bytecode.resize(size, static_cast<uint8_t>(Opcode::NOP));
-    }
+//     // --- Adjust size and terminate ---
+//     if (bytecode.size() > size) {
+//         // Truncate if too long.
+//         bytecode.resize(size);
+//     } else {
+//         // Pad with NOPs if too short.
+//         bytecode.resize(size, static_cast<uint8_t>(Opcode::NOP));
+//     }
 
-    // Ensure the program always terminates.
-    bytecode.back() = static_cast<uint8_t>(Opcode::HALT);
+//     // Ensure the program always terminates.
+//     bytecode.back() = static_cast<uint8_t>(Opcode::HALT);
 
-    return bytecode;
-}
+//     return bytecode;
+// }
 
 } // namespace evosim 
